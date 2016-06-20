@@ -1,0 +1,4 @@
+plugins:
+    osf_integration_enabled:
+        default: true
+        client: true
