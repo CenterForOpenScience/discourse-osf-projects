@@ -6,17 +6,17 @@ enabled_site_setting :osf_integration_enabled
 
 require 'pry'
 
+register_asset 'stylesheets/osf-integration.scss'
+
 register_asset 'javascripts/discourse/templates/projects/index.hbs', :server_side
 register_asset 'javascripts/discourse/templates/projects/show.hbs', :server_side
 
 after_initialize do
+    PARENT_GUIDS_FIELD_NAME = "parent_guids"
     PROJECT_GUID_FIELD_NAME = "project_guid"
     TOPIC_GUID_FIELD_NAME = "topic_guid"
 
     module ::OsfIntegration
-        PROJECT_GUID_FIELD_NAME = "project_guid"
-        TOPIC_GUID_FIELD_NAME = "topic_guid"
-
         class Engine < ::Rails::Engine
             engine_name "osf_integration"
             isolate_namespace OsfIntegration
@@ -30,6 +30,10 @@ after_initialize do
     # Register these custom fields so that they will allowed as parameters
     # We don't pass a block however, because we don't want to allow these guids
     # to be changed in the future.
+    PostRevisor.track_topic_field(:parent_guids) do |tc, parent_guids|
+        parent_guids = parent_guids.map { |guid| OsfIntegration::clean_guid(guid) }
+        tc.topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => parent_guids)
+    end
     PostRevisor.track_topic_field(:project_guid)
     PostRevisor.track_topic_field(:topic_guid)
 
@@ -37,15 +41,20 @@ after_initialize do
     on(:topic_created) do |topic, params, user|
       return unless user.try(:staff?)
 
-      project_guid = ::OsfIntegration::clean_guid(params[:project_guid])
-      topic_guid = ::OsfIntegration::clean_guid(params[:topic_guid])
+      parent_guids = params[:parent_guids].map { |guid| OsfIntegration::clean_guid(guid) }
+      project_guid = OsfIntegration::clean_guid(params[:project_guid])
+      topic_guid = OsfIntegration::clean_guid(params[:topic_guid])
 
+      topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => parent_guids)
       topic.custom_fields.update(PROJECT_GUID_FIELD_NAME => project_guid)
       topic.custom_fields.update(TOPIC_GUID_FIELD_NAME => topic_guid)
       topic.save
     end
 
     # Add methods for directly extracting these fields
+    add_to_class :topic, :parent_guids do
+      custom_fields[PARENT_GUIDS_FIELD_NAME]
+    end
     add_to_class :topic, :project_guid do
       custom_fields[PROJECT_GUID_FIELD_NAME]
     end
@@ -59,21 +68,24 @@ after_initialize do
     end
 
     # Register these custom fields to be able to appear in serializer output
+    TopicViewSerializer.attributes_from_topic(:parent_guids)
     TopicViewSerializer.attributes_from_topic(:project_guid)
     TopicViewSerializer.attributes_from_topic(:topic_guid)
 
     # Return osf related stuff in JSON output of topic items
+    add_to_serializer(:topic_list_item, :parent_guids) { object.parent_guids }
     add_to_serializer(:topic_list_item, :project_guid) { object.project_guid }
     add_to_serializer(:topic_list_item, :topic_guid) { object.topic_guid }
 
     # Mark as preloaded so that they are always available
     if TopicList.respond_to? :preloaded_custom_fields
+        TopicList.preloaded_custom_fields << PARENT_GUIDS_FIELD_NAME
         TopicList.preloaded_custom_fields << PROJECT_GUID_FIELD_NAME
         TopicList.preloaded_custom_fields << TOPIC_GUID_FIELD_NAME
     end
 
     # Routing for the project specific end-points
-    ::OsfIntegration::Engine.routes.draw do
+    OsfIntegration::Engine.routes.draw do
         get '/' => 'projects#index'
         constraints(project_guid: /[a-z0-9]+/) do
             get '/:project_guid' => 'projects#show'
@@ -88,12 +100,20 @@ after_initialize do
     end
 
     Discourse::Application.routes.append do
-      mount ::OsfIntegration::Engine, at: "/projects"
+      mount OsfIntegration::Engine, at: "/projects"
     end
 
     require_dependency 'application_controller'
     require_dependency 'topic_list_responder'
     require_dependency 'topic_query'
+
+    # Add project_name as an attribute to topic list and add it to the serializer
+    TopicList.class_eval do
+        attr_accessor :project_name
+    end
+    TopicListSerializer.class_eval do
+        attributes :project_name
+    end
 
     class ::OsfIntegration::ProjectsController < ::ApplicationController
         include ::TopicListResponder
@@ -112,12 +132,17 @@ after_initialize do
             define_method("show_#{filter}") do
                 page = params[:page].to_i
 
-                project_guid = ::OsfIntegration::clean_guid(params[:project_guid])
-                project_topics = TopicCustomField.where(name: PROJECT_GUID_FIELD_NAME, value: project_guid)
-                                                 .order('topic_id DESC')
-                                                 .limit(PAGE_SIZE)
-                                                 .offset(PAGE_SIZE * page)
+                project_guid = OsfIntegration::clean_guid(params[:project_guid])
+                project_topic_id = TopicCustomField.where(name: TOPIC_GUID_FIELD_NAME, value: project_guid)
+                                               .limit(1).pluck(:topic_id)
+                project_name = Topic.unscoped.where(id: project_topic_id).limit(1).pluck(:title)[0]
+
+                project_topics = TopicCustomField.where(name: PARENT_GUIDS_FIELD_NAME, value: project_guid)
                                                  .pluck(:topic_id)
+                                                 #.order('topic_id DESC')
+                                                 #.limit(PAGE_SIZE)
+                                                 #.offset(PAGE_SIZE * page)
+                                                 #.pluck(:topic_id)
 
                 list_options = {
                     page: 0,
@@ -136,7 +161,13 @@ after_initialize do
                                  .references('tu')
                 end
                 result = result.where(id: project_topics)
+                               .where('topics.visible')
+                #unless current_user.is_admin?
+                #    result = result.
+                #end
                 list = query.create_list(nil, {}, result)
+
+                list.project_name = project_name
                 respond_with_list(list)
 
                 #list = query.list_private_messages(current_user)

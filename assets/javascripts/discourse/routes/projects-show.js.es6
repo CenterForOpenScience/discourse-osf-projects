@@ -56,8 +56,9 @@ export default Discourse.Route.extend({
 
     return findTopicList(this.store, this.topicTrackingState, params.filter, params, {}).then(function(list) {
       controller.set('list', list);
-      controller.set('projectName', list.topics[0].title)
+      controller.set('projectName', list.topic_list.project_name);
       controller.set('canCreateTopic', list.get('can_create_topic'));
+      //console.log(list)
       //if (list.topic_list.tags) {
         //Discourse.Site.currentProp('top_tags', list.topic_list.tags);
       //}
