@@ -152,26 +152,30 @@ after_initialize do
 
                 query = TopicQuery.new(current_user, list_options)
 
-                #results = query.latest_results.where(id: project_topics)
-
                 # Start with a list of all topics
                 result = Topic.unscoped
                 if current_user
                   result = result.joins("LEFT OUTER JOIN topic_users AS tu ON (topics.id = tu.topic_id AND tu.user_id = #{current_user.id.to_i})")
                                  .references('tu')
+                    unless current_user.staff?
+                        result = result.where("topics.archetype = 'regular' OR
+                                                        (topics.id IN (SELECT topic_id
+                                                             FROM topic_allowed_groups
+                                                             WHERE group_id IN (
+                                                                 SELECT group_id FROM group_users WHERE user_id = #{current_user.id.to_i}) AND
+                                                                        group_id IN (SELECT id FROM groups WHERE name ilike ?)
+                                                            ))", project_guid)
+                    end
+                else
+                    result = result.where("topics.archetype = 'regular'")
                 end
+
                 result = result.where(id: project_topics)
-                               .where('topics.visible')
-                #unless current_user.is_admin?
-                #    result = result.
-                #end
+                               .visible
                 list = query.create_list(nil, {}, result)
 
                 list.project_name = project_name
                 respond_with_list(list)
-
-                #list = query.list_private_messages(current_user)
-                #respond_with_list(list)
             end
         end
 
