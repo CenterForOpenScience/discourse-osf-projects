@@ -56,7 +56,7 @@ export default Discourse.Route.extend({
 
     return findTopicList(this.store, this.topicTrackingState, params.filter, params, {}).then(function(list) {
       controller.set('list', list);
-      controller.set('projectName', list.topic_list.project_name);
+      //controller.set('projectName', list.topic_list.project_name);
       controller.set('canCreateTopic', list.get('can_create_topic'));
       //console.log(list)
       //if (list.topic_list.tags) {
@@ -102,10 +102,11 @@ export default Discourse.Route.extend({
         draftKey: controller.get('list.draft_key'),
         draftSequence: controller.get('list.draft_sequence')
       }).then(function() {
-        // Pre-fill the project_guid
+        // Pre-fill the project specific attributes
         if (controller.get('model.id')) {
           var c = self.controllerFor('composer').get('model');
-          c.set('project_guid', [controller.get('model.id')]);
+          c.set('parent_guids', controller.list.topic_list.parent_guids);
+          c.set('project_guid', controller.get('model.id'));
         }
       });
     },

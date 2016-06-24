@@ -39,7 +39,12 @@ after_initialize do
 
     # Hook onto topic creation to save our custom fields
     on(:topic_created) do |topic, params, user|
-      return unless user.try(:staff?)
+      return unless user.staff?
+
+      'SELECT topic_id
+        FROM topic_allowed_groups tg
+        JOIN group_users gu ON gu.user_id = :user_id AND gu.group_id = tg.group_id
+        WHERE gu.group_id IN (:group_ids)'
 
       parent_guids = params[:parent_guids].map { |guid| OsfIntegration::clean_guid(guid) }
       project_guid = OsfIntegration::clean_guid(params[:project_guid])
@@ -52,14 +57,24 @@ after_initialize do
     end
 
     # Add methods for directly extracting these fields
-    add_to_class :topic, :parent_guids do
-      custom_fields[PARENT_GUIDS_FIELD_NAME]
-    end
-    add_to_class :topic, :project_guid do
-      custom_fields[PROJECT_GUID_FIELD_NAME]
-    end
-    add_to_class :topic, :topic_guid do
-      custom_fields[TOPIC_GUID_FIELD_NAME]
+    Topic.class_eval do
+        def parent_guids
+            custom_fields[PARENT_GUIDS_FIELD_NAME]
+        end
+        def project_guid
+          custom_fields[PROJECT_GUID_FIELD_NAME]
+        end
+        def topic_guid
+          custom_fields[TOPIC_GUID_FIELD_NAME]
+        end
+        def project_name
+          project_topic = Topic.unscoped
+                         .joins("LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)")
+                         .references('tc')
+                         .where('tc.name = ? AND tc.value = ?', TOPIC_GUID_FIELD_NAME, project_guid)
+                         .limit(1)[0]
+          project_topic.title
+        end
     end
 
     # override slug generation
@@ -71,6 +86,7 @@ after_initialize do
     TopicViewSerializer.attributes_from_topic(:parent_guids)
     TopicViewSerializer.attributes_from_topic(:project_guid)
     TopicViewSerializer.attributes_from_topic(:topic_guid)
+    TopicViewSerializer.attributes_from_topic(:project_name)
 
     # Return osf related stuff in JSON output of topic items
     add_to_serializer(:topic_list_item, :parent_guids) { object.parent_guids }
@@ -109,9 +125,11 @@ after_initialize do
 
     # Add project_name as an attribute to topic list and add it to the serializer
     TopicList.class_eval do
+        attr_accessor :parent_guids
         attr_accessor :project_name
     end
     TopicListSerializer.class_eval do
+        attributes :parent_guids
         attributes :project_name
     end
 
@@ -296,9 +314,13 @@ after_initialize do
         Discourse.filters.each do |filter|
             define_method("show_#{filter}") do
                 project_guid = OsfIntegration::clean_guid(params[:project_guid])
-                project_topic_id = TopicCustomField.where(name: TOPIC_GUID_FIELD_NAME, value: project_guid)
-                                               .limit(1).pluck(:topic_id)
-                project_name = Topic.unscoped.where(id: project_topic_id).limit(1).pluck(:title)[0]
+                project_topic = Topic.unscoped
+                               .joins("LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)")
+                               .references('tc')
+                               .where('tc.name = ? AND tc.value = ?', TOPIC_GUID_FIELD_NAME, project_guid)
+                               .limit(1)[0]
+                project_name = project_topic.title
+                parent_guids = project_topic.parent_guids
 
                 list_options = {
                     per_page: PAGE_SIZE,
@@ -316,6 +338,7 @@ after_initialize do
 
                 list = query.create_list(filter, options, result)
                 if list.topics.size > 0
+                    list.parent_guids = parent_guids
                     list.project_name = project_name
                 end
                 respond_with_list(list)
