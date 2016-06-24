@@ -147,11 +147,10 @@ after_initialize do
         end
 
         def default_project_results(project_guid)
-            project_topics = TopicCustomField.where(name: PARENT_GUIDS_FIELD_NAME, value: project_guid)
-                                             .pluck(:topic_id)
-
-            # Start with a list of all topics
+            # Start with a list of all under the project
             result = Topic.unscoped
+            result = result.joins("LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)").references('tc')
+                           .where('tc.name = ? AND tc.value = ?', PARENT_GUIDS_FIELD_NAME, project_guid)
             if @user
               result = result.joins("LEFT OUTER JOIN topic_users AS tu ON (topics.id = tu.topic_id AND tu.user_id = #{@user.id.to_i})")
                              .references('tu')
@@ -167,8 +166,6 @@ after_initialize do
             else
                 result = result.where("topics.archetype = 'regular'")
             end
-
-            result = result.where(id: project_topics)
 
             # Below here is basically an exact excerpt from TopicQuery.default_results
             # The listable_topics clause is removed in favor of our own above clauses
