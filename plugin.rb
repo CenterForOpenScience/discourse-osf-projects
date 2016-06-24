@@ -172,9 +172,11 @@ after_initialize do
 
                 result = result.where(id: project_topics)
                                .visible
-                list = query.create_list(nil, {}, result)
 
-                list.project_name = project_name
+                list = query.create_list(nil, {}, result)
+                if list.topics.size > 0
+                    list.project_name = "#{list.topics.size} " + project_name
+                end
                 respond_with_list(list)
             end
         end
