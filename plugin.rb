@@ -115,6 +115,173 @@ after_initialize do
         attributes :project_name
     end
 
+    TopicQuery.class_eval do
+        def latest_project_results(project_guid)
+            result = default_project_results(project_guid)
+            remove_muted_topics(result, @user)
+        end
+
+        def unread_project_results(project_guid)
+            result = default_project_results(project_guid)
+            result = TopicQuery.unread_filter(result)
+            suggested_ordering(result, {})
+        end
+
+        def new_project_results(project_guid)
+            result = default_project_results(project_guid)
+            result = TopicQuery.new_filter(result, @user.user_option.treat_as_new_topic_start_date)
+            result = remove_muted_topics(result, @user)
+            suggested_ordering(result, {})
+        end
+
+        def read_project_results(project_guid)
+            default_project_results(project_guid).order('COALESCE(tu.last_visited_at, topics.bumped_at) DESC')
+        end
+
+        def posted_project_results(project_guid)
+            default_project_results(project_guid).where('tu.posted')
+        end
+
+        def bookmarks_project_results(project_guid)
+            default_project_results(project_guid).where('tu.bookmarked')
+        end
+
+        def default_project_results(project_guid)
+            project_topics = TopicCustomField.where(name: PARENT_GUIDS_FIELD_NAME, value: project_guid)
+                                             .pluck(:topic_id)
+
+            # Start with a list of all topics
+            result = Topic.unscoped
+            if @user
+              result = result.joins("LEFT OUTER JOIN topic_users AS tu ON (topics.id = tu.topic_id AND tu.user_id = #{@user.id.to_i})")
+                             .references('tu')
+                unless @user.staff?
+                    result = result.where("topics.archetype = 'regular' OR
+                                                    (topics.id IN (SELECT topic_id
+                                                         FROM topic_allowed_groups
+                                                         WHERE group_id IN (
+                                                             SELECT group_id FROM group_users WHERE user_id = #{@user.id.to_i}) AND
+                                                                    group_id IN (SELECT id FROM groups WHERE name ilike ?)
+                                                        ))", project_guid)
+                end
+            else
+                result = result.where("topics.archetype = 'regular'")
+            end
+
+            result = result.where(id: project_topics)
+
+            # Below here is basically an exact excerpt from TopicQuery.default_results
+            # The listable_topics clause is removed in favor of our own above clauses
+
+            options = @options
+            options[:visible] = true if @user.nil? || @user.regular?
+            options[:visible] = false if @user && @user.id == options[:filtered_to_user]
+
+            category_id = get_category_id(options[:category])
+            @options[:category_id] = category_id
+            if category_id
+              if options[:no_subcategories]
+                result = result.where('categories.id = ?', category_id)
+              else
+                result = result.where('categories.id = :category_id OR (categories.parent_category_id = :category_id AND categories.topic_id <> topics.id)', category_id: category_id)
+              end
+              result = result.references(:categories)
+            end
+
+            result = apply_ordering(result, options)
+            #result = result.listable_topics.includes(:category)
+
+            if options[:exclude_category_ids] && options[:exclude_category_ids].is_a?(Array) && options[:exclude_category_ids].size > 0
+              result = result.where("categories.id NOT IN (?)", options[:exclude_category_ids]).references(:categories)
+            end
+
+            # Don't include the category topics if excluded
+            if options[:no_definitions]
+              result = result.where('COALESCE(categories.topic_id, 0) <> topics.id')
+            end
+
+            result = result.limit(options[:per_page]) unless options[:limit] == false
+
+            result = result.visible if options[:visible]
+            result = result.where.not(topics: {id: options[:except_topic_ids]}).references(:topics) if options[:except_topic_ids]
+
+            if options[:page]
+              offset = options[:page].to_i * options[:per_page]
+              result = result.offset(offset) if offset > 0
+            end
+
+            if options[:topic_ids]
+              result = result.where('topics.id in (?)', options[:topic_ids]).references(:topics)
+            end
+
+            if search = options[:search]
+              result = result.where("topics.id in (select pp.topic_id from post_search_data pd join posts pp on pp.id = pd.post_id where pd.search_data @@ #{Search.ts_query(search.to_s)})")
+            end
+
+            # NOTE protect against SYM attack can be removed with Ruby 2.2
+            #
+            state = options[:state]
+            if @user && state &&
+                TopicUser.notification_levels.keys.map(&:to_s).include?(state)
+              level = TopicUser.notification_levels[state.to_sym]
+              result = result.where('topics.id IN (
+                                        SELECT topic_id
+                                        FROM topic_users
+                                        WHERE user_id = ? AND
+                                              notification_level = ?)', @user.id, level)
+            end
+            result
+
+            require_deleted_clause = true
+            if status = options[:status]
+              case status
+              when 'open'
+                result = result.where('NOT topics.closed AND NOT topics.archived')
+              when 'closed'
+                result = result.where('topics.closed')
+              when 'archived'
+                result = result.where('topics.archived')
+              when 'listed'
+                result = result.where('topics.visible')
+              when 'unlisted'
+                result = result.where('NOT topics.visible')
+              when 'deleted'
+                guardian = @guardian
+                if guardian.is_staff?
+                  result = result.where('topics.deleted_at IS NOT NULL')
+                  require_deleted_clause = false
+                end
+              end
+            end
+
+            if (filter=options[:filter]) && @user
+              action =
+                if filter == "bookmarked"
+                  PostActionType.types[:bookmark]
+                elsif filter == "liked"
+                  PostActionType.types[:like]
+                end
+              if action
+                result = result.where('topics.id IN (SELECT pp.topic_id
+                                      FROM post_actions pa
+                                      JOIN posts pp ON pp.id = pa.post_id
+                                      WHERE pa.user_id = :user_id AND
+                                            pa.post_action_type_id = :action AND
+                                            pa.deleted_at IS NULL
+                                   )', user_id: @user.id,
+                                       action: action
+                                   )
+              end
+            end
+
+            result = result.where('topics.deleted_at IS NULL') if require_deleted_clause
+            result = result.where('topics.posts_count <= ?', options[:max_posts]) if options[:max_posts].present?
+            result = result.where('topics.posts_count >= ?', options[:min_posts]) if options[:min_posts].present?
+
+            @guardian.filter_allowed_categories(result)
+        end
+    end
+
     class ::OsfIntegration::ProjectsController < ::ApplicationController
         include ::TopicListResponder
         requires_plugin 'discourse-osf-integration'
@@ -128,51 +295,29 @@ after_initialize do
             render json: { projects: [''] }
         end
 
+        # [:latest, :unread, :new, :read, :posted, :bookmarks]
         Discourse.filters.each do |filter|
             define_method("show_#{filter}") do
-                page = params[:page].to_i
-
                 project_guid = OsfIntegration::clean_guid(params[:project_guid])
                 project_topic_id = TopicCustomField.where(name: TOPIC_GUID_FIELD_NAME, value: project_guid)
                                                .limit(1).pluck(:topic_id)
                 project_name = Topic.unscoped.where(id: project_topic_id).limit(1).pluck(:title)[0]
 
-                project_topics = TopicCustomField.where(name: PARENT_GUIDS_FIELD_NAME, value: project_guid)
-                                                 .pluck(:topic_id)
-                                                 #.order('topic_id DESC')
-                                                 #.limit(PAGE_SIZE)
-                                                 #.offset(PAGE_SIZE * page)
-                                                 #.pluck(:topic_id)
-
                 list_options = {
-                    page: 0,
                     per_page: PAGE_SIZE,
                     limit: true,
                 }
-
+                list_options.merge!(build_topic_list_options)
                 query = TopicQuery.new(current_user, list_options)
 
-                # Start with a list of all topics
-                result = Topic.unscoped
-                if current_user
-                  result = result.joins("LEFT OUTER JOIN topic_users AS tu ON (topics.id = tu.topic_id AND tu.user_id = #{current_user.id.to_i})")
-                                 .references('tu')
-                    unless current_user.staff?
-                        result = result.where("topics.archetype = 'regular' OR
-                                                        (topics.id IN (SELECT topic_id
-                                                             FROM topic_allowed_groups
-                                                             WHERE group_id IN (
-                                                                 SELECT group_id FROM group_users WHERE user_id = #{current_user.id.to_i}) AND
-                                                                        group_id IN (SELECT id FROM groups WHERE name ilike ?)
-                                                            ))", project_guid)
-                    end
-                else
-                    result = result.where("topics.archetype = 'regular'")
+                result = query.send("#{filter}_project_results", project_guid)
+
+                options = {}
+                if filter == :read || filter == :unread || filter == :new
+                    options = {unordered: true}
                 end
 
-                result = result.where(id: project_topics).visible
-
-                list = query.create_list(nil, {}, result)
+                list = query.create_list(filter, options, result)
                 if list.topics.size > 0
                     list.project_name = project_name
                 end
@@ -182,6 +327,28 @@ after_initialize do
 
         def show
           show_latest
+        end
+
+        def build_topic_list_options
+          options = {
+            page: params[:page],
+            topic_ids: param_to_integer_list(:topic_ids),
+            exclude_category_ids: params[:exclude_category_ids],
+            category: params[:category],
+            order: params[:order],
+            ascending: params[:ascending],
+            min_posts: params[:min_posts],
+            max_posts: params[:max_posts],
+            status: params[:status],
+            filter: params[:filter],
+            state: params[:state],
+            search: params[:search],
+            q: params[:q]
+          }
+          options[:no_subcategories] = true if params[:no_subcategories] == 'true'
+          options[:slow_platform] = true if slow_platform?
+
+          options
         end
     end
 end
