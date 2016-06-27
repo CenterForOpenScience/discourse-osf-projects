@@ -65,7 +65,6 @@ after_initialize do
         WHERE gu.group_id IN (:group_ids)'
 
       parent_guids = params[:parent_guids].map { |guid| OsfIntegration::clean_guid(guid) }
-      project_guid = OsfIntegration::clean_guid(params[:project_guid])
       topic_guid = OsfIntegration::clean_guid(params[:topic_guid])
 
       topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => parent_guids)
