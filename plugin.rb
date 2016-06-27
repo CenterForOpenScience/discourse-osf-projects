@@ -15,6 +15,7 @@ after_initialize do
     PARENT_GUIDS_FIELD_NAME = "parent_guids"
     PROJECT_GUID_FIELD_NAME = "project_guid"
     TOPIC_GUID_FIELD_NAME = "topic_guid"
+    PROJECT_NAME_FIELD_NAME = "project_name"
 
     module ::OsfIntegration
         class Engine < ::Rails::Engine
@@ -92,12 +93,14 @@ after_initialize do
     add_to_serializer(:topic_list_item, :parent_guids) { object.parent_guids }
     add_to_serializer(:topic_list_item, :project_guid) { object.project_guid }
     add_to_serializer(:topic_list_item, :topic_guid) { object.topic_guid }
+    add_to_serializer(:topic_list_item, :project_name) { object.project_name }
 
     # Mark as preloaded so that they are always available
     if TopicList.respond_to? :preloaded_custom_fields
         TopicList.preloaded_custom_fields << PARENT_GUIDS_FIELD_NAME
         TopicList.preloaded_custom_fields << PROJECT_GUID_FIELD_NAME
         TopicList.preloaded_custom_fields << TOPIC_GUID_FIELD_NAME
+        TopicList.preloaded_custom_fields << PROJECT_NAME_FIELD_NAME
     end
 
     # Routing for the project specific end-points
