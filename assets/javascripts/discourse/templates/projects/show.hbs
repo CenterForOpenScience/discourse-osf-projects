@@ -4,9 +4,13 @@
     <button id="create-topic" class='btn btn-default' {{action "createTopic"}}><i class='fa fa-plus'></i>{{i18n 'topic.create'}}</button>
   {{/if}}
   <h1 class="project-show-heading">
-    {{#link-to 'projects'}}Projects{{!--i18n "osf.projects"--}}{{/link-to}}
+    {{#if list.topic_list.parent_names[1]}}
+        {{#link-to 'projects/' list.topic_list.parent_guids[1]}}{{list.topic_list.parent_names[1]}}{{/link-to}}
+    {{else}}
+        {{#link-to 'projects'}}Projects{{!--i18n "osf.projects"--}}{{/link-to}}
+    {{/if}}
     <i class="fa fa-angle-right"></i>
-    {{osf-project-bound projectRecord=project projectName=list.topic_list.project_name style="simple"}}
+    {{osf-project-bound projectRecord=project projectName=list.topic_list.parent_names[0] style="simple"}}
   </h1>
   </div>
 </div>

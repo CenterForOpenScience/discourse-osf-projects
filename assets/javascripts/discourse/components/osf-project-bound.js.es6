@@ -1,5 +1,6 @@
 export default  Ember.Component.extend({
   projectName: 'a',
+  parentNames: ['a'],
   classNameBindings: [':osf-project', 'style', 'projectClass'],
   attributeBindings: ['href'],
 

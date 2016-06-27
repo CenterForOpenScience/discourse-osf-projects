@@ -106,7 +106,6 @@ export default Discourse.Route.extend({
         if (controller.get('model.id')) {
           var c = self.controllerFor('composer').get('model');
           c.set('parent_guids', controller.list.topic_list.parent_guids);
-          c.set('project_guid', controller.get('model.id'));
         }
       });
     },

@@ -13,9 +13,8 @@ register_asset 'javascripts/discourse/templates/projects/show.hbs', :server_side
 
 after_initialize do
     PARENT_GUIDS_FIELD_NAME = "parent_guids"
-    PROJECT_GUID_FIELD_NAME = "project_guid"
     TOPIC_GUID_FIELD_NAME = "topic_guid"
-    PROJECT_NAME_FIELD_NAME = "project_name"
+    PARENT_NAMES_FIELD_NAME = "parent_names"
 
     module ::OsfIntegration
         class Engine < ::Rails::Engine
@@ -26,6 +25,25 @@ after_initialize do
         def self.clean_guid(guid)
             guid.downcase.gsub(/[^a-z0-9]/, '')
         end
+
+        def self.names_for_guids(guids)
+            topics = Topic.unscoped
+                            .joins("LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)")
+                            .references('tc')
+                            .where('tc.name = ? AND tc.value IN (?)', TOPIC_GUID_FIELD_NAME, guids)
+            guids.map do |guid|
+                topic = topics.select { |t| t.topic_guid == guid }[0]
+                topic ? topic.title : ''
+            end
+        end
+
+        def self.parent_guids_for_guid(guid)
+            topics = Topic.unscoped
+                            .joins("LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)")
+                            .references('tc')
+                            .where('tc.name = ? AND tc.value = ?', TOPIC_GUID_FIELD_NAME, guid)
+            [topics[0].parent_guids].flatten if topics[0]
+        end
     end
 
     # Register these custom fields so that they will allowed as parameters
@@ -35,7 +53,6 @@ after_initialize do
         parent_guids = parent_guids.map { |guid| OsfIntegration::clean_guid(guid) }
         tc.topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => parent_guids)
     end
-    PostRevisor.track_topic_field(:project_guid)
     PostRevisor.track_topic_field(:topic_guid)
 
     # Hook onto topic creation to save our custom fields
@@ -52,7 +69,6 @@ after_initialize do
       topic_guid = OsfIntegration::clean_guid(params[:topic_guid])
 
       topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => parent_guids)
-      topic.custom_fields.update(PROJECT_GUID_FIELD_NAME => project_guid)
       topic.custom_fields.update(TOPIC_GUID_FIELD_NAME => topic_guid)
       topic.save
     end
@@ -60,21 +76,13 @@ after_initialize do
     # Add methods for directly extracting these fields
     Topic.class_eval do
         def parent_guids
-            custom_fields[PARENT_GUIDS_FIELD_NAME]
-        end
-        def project_guid
-          custom_fields[PROJECT_GUID_FIELD_NAME]
+            [custom_fields[PARENT_GUIDS_FIELD_NAME]].flatten
         end
         def topic_guid
           custom_fields[TOPIC_GUID_FIELD_NAME]
         end
-        def project_name
-          project_topic = Topic.unscoped
-                         .joins("LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)")
-                         .references('tc')
-                         .where('tc.name = ? AND tc.value = ?', TOPIC_GUID_FIELD_NAME, project_guid)
-                         .limit(1)[0]
-          project_topic.title
+        def parent_names
+            OsfIntegration::names_for_guids(parent_guids)
         end
     end
 
@@ -85,22 +93,19 @@ after_initialize do
 
     # Register these custom fields to be able to appear in serializer output
     TopicViewSerializer.attributes_from_topic(:parent_guids)
-    TopicViewSerializer.attributes_from_topic(:project_guid)
     TopicViewSerializer.attributes_from_topic(:topic_guid)
-    TopicViewSerializer.attributes_from_topic(:project_name)
+    TopicViewSerializer.attributes_from_topic(:parent_names)
 
     # Return osf related stuff in JSON output of topic items
     add_to_serializer(:topic_list_item, :parent_guids) { object.parent_guids }
-    add_to_serializer(:topic_list_item, :project_guid) { object.project_guid }
     add_to_serializer(:topic_list_item, :topic_guid) { object.topic_guid }
-    add_to_serializer(:topic_list_item, :project_name) { object.project_name }
+    add_to_serializer(:topic_list_item, :parent_names) { object.parent_names }
 
     # Mark as preloaded so that they are always available
     if TopicList.respond_to? :preloaded_custom_fields
         TopicList.preloaded_custom_fields << PARENT_GUIDS_FIELD_NAME
-        TopicList.preloaded_custom_fields << PROJECT_GUID_FIELD_NAME
         TopicList.preloaded_custom_fields << TOPIC_GUID_FIELD_NAME
-        TopicList.preloaded_custom_fields << PROJECT_NAME_FIELD_NAME
+        TopicList.preloaded_custom_fields << PARENT_NAMES_FIELD_NAME
     end
 
     # Routing for the project specific end-points
@@ -126,14 +131,14 @@ after_initialize do
     require_dependency 'topic_list_responder'
     require_dependency 'topic_query'
 
-    # Add project_name as an attribute to topic list and add it to the serializer
+    # Add parent_names as an attribute to topic list and add it to the serializer
     TopicList.class_eval do
         attr_accessor :parent_guids
-        attr_accessor :project_name
+        attr_accessor :parent_names
     end
     TopicListSerializer.class_eval do
         attributes :parent_guids
-        attributes :project_name
+        attributes :parent_names
     end
 
     TopicQuery.class_eval do
@@ -317,13 +322,8 @@ after_initialize do
         Discourse.filters.each do |filter|
             define_method("show_#{filter}") do
                 project_guid = OsfIntegration::clean_guid(params[:project_guid])
-                project_topic = Topic.unscoped
-                               .joins("LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)")
-                               .references('tc')
-                               .where('tc.name = ? AND tc.value = ?', TOPIC_GUID_FIELD_NAME, project_guid)
-                               .limit(1)[0]
-                project_name = project_topic.title
-                parent_guids = project_topic.parent_guids
+                parent_guids = OsfIntegration::parent_guids_for_guid(project_guid)
+                parent_names = OsfIntegration::names_for_guids(parent_guids)
 
                 list_options = {
                     per_page: PAGE_SIZE,
@@ -342,7 +342,7 @@ after_initialize do
                 list = query.create_list(filter, options, result)
                 if list.topics.size > 0
                     list.parent_guids = parent_guids
-                    list.project_name = project_name
+                    list.parent_names = parent_names
                 end
                 respond_with_list(list)
             end
