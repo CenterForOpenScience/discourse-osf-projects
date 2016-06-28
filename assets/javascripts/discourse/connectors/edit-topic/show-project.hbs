@@ -1,0 +1,7 @@
+<span>Hello World</span>
+
+{{#if topic.parent_names.[0]}}
+  <div class='parent-project'>
+    {{#link-to 'projects.show' topic.parent_guids.[0]}}{{topic.parent_names.[0]}}{{/link-to}}
+  </div>
+{{/if}}
