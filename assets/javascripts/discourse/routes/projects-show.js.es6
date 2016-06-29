@@ -93,7 +93,7 @@ export default Discourse.Route.extend({
 
       this.controllerFor('composer').open({
         categoryId: controller.get('category.id'),
-        action: Composer.CREATE_TOPIC,
+        action: controller.list.topic_list.project_is_public ? Composer.CREATE_TOPIC : Composer.PRIVATE_MESSAGE,
         draftKey: controller.get('list.draft_key'),
         draftSequence: controller.get('list.draft_sequence')
       }).then(function() {

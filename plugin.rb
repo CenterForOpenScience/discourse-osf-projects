@@ -15,6 +15,7 @@ after_initialize do
     PARENT_GUIDS_FIELD_NAME = "parent_guids"
     TOPIC_GUID_FIELD_NAME = "topic_guid"
     PARENT_NAMES_FIELD_NAME = "parent_names"
+    PROJECT_IS_PUBLIC_FIELD_NAME = "project_is_public"
 
     module ::OsfIntegration
         class Engine < ::Rails::Engine
@@ -37,12 +38,25 @@ after_initialize do
             end
         end
 
-        def self.parent_guids_for_guid(guid)
+        def self.topic_for_guid(guid)
             topics = Topic.unscoped
                             .joins("LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)")
                             .references('tc')
                             .where('tc.name = ? AND tc.value = ?', TOPIC_GUID_FIELD_NAME, guid)
-            [topics[0].parent_guids].flatten if topics[0]
+            #[topics[0].parent_guids].flatten if topics[0]
+            topics[0]
+        end
+
+        def self.can_create_project_topic(project_guid, user)
+            return false if user == nil
+            sql = <<-SQL
+                SELECT 1
+                FROM groups
+                INNER JOIN group_users AS gu ON groups.id = gu.group_id
+                WHERE groups.name = :project_guid AND gu.user_id = :user_id
+            SQL
+            result = User.exec_sql(sql, project_guid: project_guid, user_id: user.id).to_a
+            result.length > 0
         end
     end
 
@@ -57,19 +71,20 @@ after_initialize do
 
     # Hook onto topic creation to save our custom fields
     on(:topic_created) do |topic, params, user|
-      return unless user.staff?
+        next unless params[:parent_guids]
+        parent_guids = params[:parent_guids].map { |guid| OsfIntegration::clean_guid(guid) }
 
-      'SELECT topic_id
-        FROM topic_allowed_groups tg
-        JOIN group_users gu ON gu.user_id = :user_id AND gu.group_id = tg.group_id
-        WHERE gu.group_id IN (:group_ids)'
+        unless user.staff?
+            next unless OsfIntegration::can_create_project_topic(parent_guids[0], user)
+        end
 
-      parent_guids = params[:parent_guids].map { |guid| OsfIntegration::clean_guid(guid) }
-      topic_guid = OsfIntegration::clean_guid(params[:topic_guid])
+        if params[:topic_guid]
+            topic_guid = OsfIntegration::clean_guid(params[:topic_guid])
+            topic.custom_fields.update(TOPIC_GUID_FIELD_NAME => topic_guid)
+        end
 
-      topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => parent_guids)
-      topic.custom_fields.update(TOPIC_GUID_FIELD_NAME => topic_guid)
-      topic.save
+        topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => parent_guids)
+        topic.save
     end
 
     # Add methods for directly extracting these fields
@@ -134,10 +149,16 @@ after_initialize do
     TopicList.class_eval do
         attr_accessor :parent_guids
         attr_accessor :parent_names
+        attr_accessor :project_is_public
     end
     TopicListSerializer.class_eval do
         attributes :parent_guids
         attributes :parent_names
+        attributes :project_is_public
+        def can_create_topic
+            project_guid = object.parent_guids[0]
+            scope.can_create?(Topic) && OsfIntegration::can_create_project_topic(project_guid, scope.user)
+        end
     end
 
     TopicQuery.class_eval do
@@ -321,7 +342,12 @@ after_initialize do
         Discourse.filters.each do |filter|
             define_method("show_#{filter}") do
                 project_guid = OsfIntegration::clean_guid(params[:project_guid])
-                parent_guids = OsfIntegration::parent_guids_for_guid(project_guid)
+                project_topic = OsfIntegration::topic_for_guid(project_guid)
+                project_is_public = project_topic.archetype != Archetype.private_message
+
+                raise Discourse::NotFound unless project_is_public || OsfIntegration::can_create_project_topic(project_guid, current_user)
+
+                parent_guids = [project_topic.parent_guids].flatten
                 parent_names = OsfIntegration::names_for_guids(parent_guids)
 
                 list_options = {
@@ -339,10 +365,10 @@ after_initialize do
                 end
 
                 list = query.create_list(filter, options, result)
-                if list.topics.size > 0
-                    list.parent_guids = parent_guids
-                    list.parent_names = parent_names
-                end
+                list.parent_guids = parent_guids
+                list.parent_names = parent_names
+                list.project_is_public = project_is_public
+
                 respond_with_list(list)
             end
         end
