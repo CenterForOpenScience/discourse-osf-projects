@@ -1,4 +1,4 @@
 plugins:
-    osf_integration_enabled:
+    osf_projects_enabled:
         default: true
         client: true

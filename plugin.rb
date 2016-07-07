@@ -1,26 +1,24 @@
-# name: discourse-osf-integration
-# about: An integration plug-in for the Open Science Framework
+# name: discourse-osf-projects
+# about: Introduces the concept of projects or sub-sites that can be either public or private
 # version: 0.0.1
-# authors: Center for Open Science
-enabled_site_setting :osf_integration_enabled
+# authors: Acshi Haggenmiller
+enabled_site_setting :osf_projects_enabled
 
-require 'pry'
-
-register_asset 'stylesheets/osf-integration.scss'
+register_asset 'stylesheets/osf-projects.scss'
 
 register_asset 'javascripts/discourse/templates/projects/index.hbs', :server_side
 register_asset 'javascripts/discourse/templates/projects/show.hbs', :server_side
 
 after_initialize do
     PARENT_GUIDS_FIELD_NAME = "parent_guids"
+    PROJECT_GUID_FIELD_NAME = "project_guid" # DB use only: equivalent to parent_guids[0]
     TOPIC_GUID_FIELD_NAME = "topic_guid"
     PARENT_NAMES_FIELD_NAME = "parent_names"
-    PROJECT_IS_PUBLIC_FIELD_NAME = "project_is_public"
 
-    module ::OsfIntegration
+    module ::OsfProjects
         class Engine < ::Rails::Engine
-            engine_name "osf_integration"
-            isolate_namespace OsfIntegration
+            engine_name "osf_projects"
+            isolate_namespace OsfProjects
         end
 
         def self.clean_guid(guid)
@@ -58,94 +56,123 @@ after_initialize do
             result = User.exec_sql(sql, project_guid: project_guid, user_id: user.id).to_a
             result.length > 0
         end
+
+        def self.allowed_project_topics(topics, user)
+            # a visible group is a public one
+            allowed_project_guids = Group.select(:name)
+                                         .joins("INNER JOIN group_users AS gu ON groups.id = gu.group_id")
+                                         .where((user ? "gu.user_id = :user_id OR " : "") + "groups.visible = 't'",
+                                                 user_id: user ? user.id : nil)
+            topics.joins("LEFT JOIN topic_custom_fields AS tc ON topics.id = tc.topic_id")
+                  .where("tc.name = ? AND tc.value IN (#{allowed_project_guids.to_sql})", PROJECT_GUID_FIELD_NAME)
+        end
     end
 
     # Register these custom fields so that they will allowed as parameters
-    # We don't pass a block however, because we don't want to allow these guids
+    # We don't pass a block when we don't want to allow these guids
     # to be changed in the future.
     PostRevisor.track_topic_field(:parent_guids) do |tc, parent_guids|
-        parent_guids = parent_guids.map { |guid| OsfIntegration::clean_guid(guid) }
+        parent_guids = parent_guids.map { |guid| OsfProjects::clean_guid(guid) }
         tc.topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => parent_guids)
+        tc.topic.custom_fields.update(PROJECT_GUID_FIELD_NAME => parent_guids[0])
     end
     PostRevisor.track_topic_field(:topic_guid)
+
+    on(:before_create_topic) do |topic, topic_creator|
+        topic_creator.prepare_project_topic(topic)
+    end
 
     # Hook onto topic creation to save our custom fields
     on(:topic_created) do |topic, params, user|
         next unless params[:parent_guids]
-        parent_guids = params[:parent_guids].map { |guid| OsfIntegration::clean_guid(guid) }
+        parent_guids = params[:parent_guids].map { |guid| OsfProjects::clean_guid(guid) }
 
         unless user.staff?
-            next unless OsfIntegration::can_create_project_topic(parent_guids[0], user)
+            next unless OsfProjects::can_create_project_topic(parent_guids[0], user)
         end
 
         if params[:topic_guid]
-            topic_guid = OsfIntegration::clean_guid(params[:topic_guid])
+            topic_guid = OsfProjects::clean_guid(params[:topic_guid])
             topic.custom_fields.update(TOPIC_GUID_FIELD_NAME => topic_guid)
         end
 
         topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => parent_guids)
+        topic.custom_fields.update(PROJECT_GUID_FIELD_NAME => parent_guids[0])
         topic.save
     end
 
     # Add methods for directly extracting these fields
+    # and making them accessible to the TopicViewSerializer
     Topic.class_eval do
         def parent_guids
             [custom_fields[PARENT_GUIDS_FIELD_NAME]].flatten
         end
         def topic_guid
-          custom_fields[TOPIC_GUID_FIELD_NAME]
+            custom_fields[TOPIC_GUID_FIELD_NAME]
         end
+        # cache these for db performance (does it help?)
         def parent_names
-            OsfIntegration::names_for_guids(parent_guids)
+            @parent_names ||= OsfProjects::names_for_guids(parent_guids)
+        end
+        def project_is_public
+            return @project_is_public if @project_is_public != nil
+            projectGroup = Group.select(:visible).where(name: parent_guids[0]).first
+            @project_is_public = projectGroup ? projectGroup.visible : false
+        end
+
+        # Override the default results for permissions control
+        old_secured = self.method(:secured)
+        scope :secured, lambda { |guardian=nil|
+            result = old_secured.call
+            OsfProjects::allowed_project_topics(result, guardian ? guardian.user : nil)
+        }
+    end
+
+    TopicCreator.class_eval do
+        def prepare_project_topic(topic)
+            return unless @opts[:archetype] == Archetype.default
+            # Associate it with the project group
+            add_groups(topic, [@opts[:parent_guids][0]])
         end
     end
 
     # override slug generation
     add_to_class :topic, :slug do
-      topic_guid
+        slug = topic_guid
+        unless read_attribute(:slug)
+          if new_record?
+            write_attribute(:slug, slug)
+          else
+            update_column(:slug, slug)
+          end
+        end
+        slug
     end
 
-    # Register these custom fields to be able to appear in serializer output
+    # Register these Topic attributes to appear on the Topic page
     TopicViewSerializer.attributes_from_topic(:parent_guids)
     TopicViewSerializer.attributes_from_topic(:topic_guid)
     TopicViewSerializer.attributes_from_topic(:parent_names)
+    TopicViewSerializer.attributes_from_topic(:project_is_public)
 
-    # Return osf related stuff in JSON output of topic items
-    add_to_serializer(:topic_list_item, :parent_guids) { object.parent_guids }
-    add_to_serializer(:topic_list_item, :topic_guid) { object.topic_guid }
-    add_to_serializer(:topic_list_item, :parent_names) { object.parent_names }
+    # Register these to appear on the TopicList page/the SuggestedTopics for each item
+    add_to_serializer(:listable_topic, :parent_guids) { object.parent_guids }
+    add_to_serializer(:listable_topic, :topic_guid) { object.topic_guid }
+    add_to_serializer(:listable_topic, :parent_names) { object.parent_names }
+    add_to_serializer(:listable_topic, :project_is_public) { object.project_is_public }
 
-    # Mark as preloaded so that they are always available
+    # Mark as preloaded so they are included in the SQL queries
     if TopicList.respond_to? :preloaded_custom_fields
         TopicList.preloaded_custom_fields << PARENT_GUIDS_FIELD_NAME
         TopicList.preloaded_custom_fields << TOPIC_GUID_FIELD_NAME
-        TopicList.preloaded_custom_fields << PARENT_NAMES_FIELD_NAME
-    end
-
-    # Routing for the project specific end-points
-    OsfIntegration::Engine.routes.draw do
-        get '/' => 'projects#index'
-        constraints(project_guid: /[a-z0-9]+/) do
-            get '/:project_guid' => 'projects#show'
-            get '/c/:category/:project_guid' => 'projects#show'
-            get '/c/:parent_category/:category/:project_guid' => 'projects#show'
-            Discourse.filters.each do |filter|
-              get "/:project_guid/l/#{filter}" => "projects#show_#{filter}"
-              get "/c/:category/:project_guid/l/#{filter}" => "projects#show_#{filter}"
-              get "/c/:parent_category/:category/:project_guid/l/#{filter}" => "projects#show_#{filter}"
-            end
-        end
-    end
-
-    Discourse::Application.routes.append do
-      mount OsfIntegration::Engine, at: "/projects"
+        #TopicList.preloaded_custom_fields << PARENT_NAMES_FIELD_NAME
     end
 
     require_dependency 'application_controller'
     require_dependency 'topic_list_responder'
     require_dependency 'topic_query'
 
-    # Add parent_names as an attribute to topic list and add it to the serializer
+    # Add custom topic list attributes and add register them to be output by the serializer
     TopicList.class_eval do
         attr_accessor :parent_guids
         attr_accessor :parent_names
@@ -156,8 +183,9 @@ after_initialize do
         attributes :parent_names
         attributes :project_is_public
         def can_create_topic
-            project_guid = object.parent_guids[0]
-            scope.can_create?(Topic) && OsfIntegration::can_create_project_topic(project_guid, scope.user)
+            scope.can_create?(Topic) &&
+                object.parent_guids &&
+                OsfProjects::can_create_project_topic(object.parent_guids[0], scope.user)
         end
     end
 
@@ -193,141 +221,61 @@ after_initialize do
         end
 
         def default_project_results(project_guid)
-            # Start with a list of all under the project
-            result = Topic.unscoped
-            result = result.joins("LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)").references('tc')
-                           .where('tc.name = ? AND tc.value = ?', PARENT_GUIDS_FIELD_NAME, project_guid)
-            if @user
-              result = result.joins("LEFT OUTER JOIN topic_users AS tu ON (topics.id = tu.topic_id AND tu.user_id = #{@user.id.to_i})")
-                             .references('tu')
-                unless @user.staff?
-                    result = result.where("topics.archetype = 'regular' OR
-                                                    (topics.id IN (SELECT topic_id
-                                                         FROM topic_allowed_groups
-                                                         WHERE group_id IN (
-                                                             SELECT group_id FROM group_users WHERE user_id = #{@user.id.to_i}) AND
-                                                                    group_id IN (SELECT id FROM groups WHERE name ilike ?)
-                                                        ))", project_guid)
-                end
-            else
-                result = result.where("topics.archetype = 'regular'")
-            end
+            default_results.joins("LEFT JOIN topic_custom_fields AS tc2 ON (topics.id = tc2.topic_id)")
+                           .where("tc2.name = ? AND tc2.value = ?", PARENT_GUIDS_FIELD_NAME, project_guid)
+        end
 
-            # Below here is basically an exact excerpt from TopicQuery.default_results
-            # The listable_topics clause is removed in favor of our own above clauses
-
-            options = @options
-            options[:visible] = true if @user.nil? || @user.regular?
-            options[:visible] = false if @user && @user.id == options[:filtered_to_user]
-
-            category_id = get_category_id(options[:category])
-            @options[:category_id] = category_id
-            if category_id
-              if options[:no_subcategories]
-                result = result.where('categories.id = ?', category_id)
-              else
-                result = result.where('categories.id = :category_id OR (categories.parent_category_id = :category_id AND categories.topic_id <> topics.id)', category_id: category_id)
-              end
-              result = result.references(:categories)
-            end
-
-            result = apply_ordering(result, options)
-            #result = result.listable_topics.includes(:category)
-
-            if options[:exclude_category_ids] && options[:exclude_category_ids].is_a?(Array) && options[:exclude_category_ids].size > 0
-              result = result.where("categories.id NOT IN (?)", options[:exclude_category_ids]).references(:categories)
-            end
-
-            # Don't include the category topics if excluded
-            if options[:no_definitions]
-              result = result.where('COALESCE(categories.topic_id, 0) <> topics.id')
-            end
-
-            result = result.limit(options[:per_page]) unless options[:limit] == false
-
-            result = result.visible if options[:visible]
-            result = result.where.not(topics: {id: options[:except_topic_ids]}).references(:topics) if options[:except_topic_ids]
-
-            if options[:page]
-              offset = options[:page].to_i * options[:per_page]
-              result = result.offset(offset) if offset > 0
-            end
-
-            if options[:topic_ids]
-              result = result.where('topics.id in (?)', options[:topic_ids]).references(:topics)
-            end
-
-            if search = options[:search]
-              result = result.where("topics.id in (select pp.topic_id from post_search_data pd join posts pp on pp.id = pd.post_id where pd.search_data @@ #{Search.ts_query(search.to_s)})")
-            end
-
-            # NOTE protect against SYM attack can be removed with Ruby 2.2
-            #
-            state = options[:state]
-            if @user && state &&
-                TopicUser.notification_levels.keys.map(&:to_s).include?(state)
-              level = TopicUser.notification_levels[state.to_sym]
-              result = result.where('topics.id IN (
-                                        SELECT topic_id
-                                        FROM topic_users
-                                        WHERE user_id = ? AND
-                                              notification_level = ?)', @user.id, level)
-            end
-            result
-
-            require_deleted_clause = true
-            if status = options[:status]
-              case status
-              when 'open'
-                result = result.where('NOT topics.closed AND NOT topics.archived')
-              when 'closed'
-                result = result.where('topics.closed')
-              when 'archived'
-                result = result.where('topics.archived')
-              when 'listed'
-                result = result.where('topics.visible')
-              when 'unlisted'
-                result = result.where('NOT topics.visible')
-              when 'deleted'
-                guardian = @guardian
-                if guardian.is_staff?
-                  result = result.where('topics.deleted_at IS NOT NULL')
-                  require_deleted_clause = false
-                end
-              end
-            end
-
-            if (filter=options[:filter]) && @user
-              action =
-                if filter == "bookmarked"
-                  PostActionType.types[:bookmark]
-                elsif filter == "liked"
-                  PostActionType.types[:like]
-                end
-              if action
-                result = result.where('topics.id IN (SELECT pp.topic_id
-                                      FROM post_actions pa
-                                      JOIN posts pp ON pp.id = pa.post_id
-                                      WHERE pa.user_id = :user_id AND
-                                            pa.post_action_type_id = :action AND
-                                            pa.deleted_at IS NULL
-                                   )', user_id: @user.id,
-                                       action: action
-                                   )
-              end
-            end
-
-            result = result.where('topics.deleted_at IS NULL') if require_deleted_clause
-            result = result.where('topics.posts_count <= ?', options[:max_posts]) if options[:max_posts].present?
-            result = result.where('topics.posts_count >= ?', options[:min_posts]) if options[:min_posts].present?
-
-            @guardian.filter_allowed_categories(result)
+        # Override the default results for permissions control
+        old_default_results = self.instance_method(:default_results)
+        define_method(:default_results) do |options={}|
+            result = old_default_results.bind(self).call(options)
+            OsfProjects::allowed_project_topics(result, @user)
         end
     end
 
-    class ::OsfIntegration::ProjectsController < ::ApplicationController
+    TopicsController.class_eval do
+        old_show = self.instance_method(:show)
+        define_method(:show) do
+            topic = Topic.with_deleted.where(id: params[:topic_id] || params[:id]).first
+            if topic == nil
+                slug = params[:slug] || params[:id]
+                topic = Topic.find_by(slug: slug.downcase) if slug
+            end
+            raise Discourse::NotFound if topic == nil
+
+            project_guid = topic.parent_guids[0]
+            project_topic = OsfProjects::topic_for_guid(project_guid)
+            raise Discourse::NotFound unless project_topic
+
+            project_is_public = project_topic.project_is_public
+            raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
+
+            old_show.bind(self).call
+        end
+    end
+
+    # Routing for the project specific end-points
+    OsfProjects::Engine.routes.draw do
+        get '/' => 'projects#index'
+        constraints(project_guid: /[a-z0-9]+/) do
+            get '/:project_guid' => 'projects#show'
+            get '/c/:category/:project_guid' => 'projects#show'
+            get '/c/:parent_category/:category/:project_guid' => 'projects#show'
+            Discourse.filters.each do |filter|
+              get "/:project_guid/l/#{filter}" => "projects#show_#{filter}"
+              get "/c/:category/:project_guid/l/#{filter}" => "projects#show_#{filter}"
+              get "/c/:parent_category/:category/:project_guid/l/#{filter}" => "projects#show_#{filter}"
+            end
+        end
+    end
+
+    Discourse::Application.routes.append do
+      mount OsfProjects::Engine, at: "/projects"
+    end
+
+    class ::OsfProjects::ProjectsController < ::ApplicationController
         include ::TopicListResponder
-        requires_plugin 'discourse-osf-integration'
+        requires_plugin 'discourse-osf-projects'
 
         PAGE_SIZE = 50
 
@@ -341,14 +289,14 @@ after_initialize do
         # [:latest, :unread, :new, :read, :posted, :bookmarks]
         Discourse.filters.each do |filter|
             define_method("show_#{filter}") do
-                project_guid = OsfIntegration::clean_guid(params[:project_guid])
-                project_topic = OsfIntegration::topic_for_guid(project_guid)
-                project_is_public = project_topic.archetype != Archetype.private_message
+                project_guid = OsfProjects::clean_guid(params[:project_guid])
+                project_topic = OsfProjects::topic_for_guid(project_guid)
+                project_is_public = project_topic.project_is_public
 
-                raise Discourse::NotFound unless project_is_public || OsfIntegration::can_create_project_topic(project_guid, current_user)
+                raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
 
                 parent_guids = [project_topic.parent_guids].flatten
-                parent_names = OsfIntegration::names_for_guids(parent_guids)
+                parent_names = OsfProjects::names_for_guids(parent_guids)
 
                 list_options = {
                     per_page: PAGE_SIZE,

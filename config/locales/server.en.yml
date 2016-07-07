@@ -1,3 +1,3 @@
 en:
     site_settings:
-        osf_integration_enabled: "Enable OSF integration?"
+        osf_projects_enabled: "Enable OSF Projects?"

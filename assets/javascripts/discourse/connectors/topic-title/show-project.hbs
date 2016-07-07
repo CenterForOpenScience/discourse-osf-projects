@@ -1,0 +1,15 @@
+{{#if this.model.parent_guids.[0]}}
+    {{#unless this.model.project_is_public}}
+        <i class="fa fa-lock"></i>
+    {{/unless}}
+    {{#each this.model.parent_guids as |parent_guid index|}}
+        {{#if index}}
+            <i class="fa fa-angle-right"></i>
+        {{/if}}
+        <span class='parent-project'>
+            {{#link-to 'projects.show' (object-from-end this.model.parent_guids index) }}
+                {{object-from-end this.model.parent_names index}}
+            {{/link-to}}
+        </span>
+    {{/each}}
+{{/if}}

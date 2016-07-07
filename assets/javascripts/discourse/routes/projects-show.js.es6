@@ -2,7 +2,7 @@ import Composer from 'discourse/models/composer';
 import showModal from "discourse/lib/show-modal";
 import { findTopicList } from 'discourse/routes/build-topic-route';
 
-export default Discourse.Route.extend({
+const ProjectsShowRoute = Discourse.Route.extend({
   navMode: 'latest',
 
   renderTemplate() {
@@ -93,7 +93,7 @@ export default Discourse.Route.extend({
 
       this.controllerFor('composer').open({
         categoryId: controller.get('category.id'),
-        action: controller.list.topic_list.project_is_public ? Composer.CREATE_TOPIC : Composer.PRIVATE_MESSAGE,
+        action: Composer.CREATE_TOPIC,
         draftKey: controller.get('list.draft_key'),
         draftSequence: controller.get('list.draft_sequence')
       }).then(function() {
@@ -101,6 +101,7 @@ export default Discourse.Route.extend({
         if (controller.get('model.id')) {
           var c = self.controllerFor('composer').get('model');
           c.set('parent_guids', controller.list.topic_list.parent_guids);
+          c.set('parent_names', controller.list.topic_list.parent_names);
         }
       });
     },
@@ -121,3 +122,5 @@ export default Discourse.Route.extend({
     }
   }
 });
+
+export default ProjectsShowRoute;

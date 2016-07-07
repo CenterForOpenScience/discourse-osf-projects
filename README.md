@@ -1,1 +1,1 @@
-# discourse-osf-integration
+# discourse-projects
