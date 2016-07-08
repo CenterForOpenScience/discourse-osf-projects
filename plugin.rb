@@ -46,6 +46,7 @@ after_initialize do
         end
 
         def self.can_create_project_topic(project_guid, user)
+            return true if user.staff?
             return false if user == nil
             sql = <<-SQL
                 SELECT 1
@@ -58,6 +59,7 @@ after_initialize do
         end
 
         def self.allowed_project_topics(topics, user)
+            return topics if user && user.staff?
             # a visible group is a public one
             allowed_project_guids = Group.select(:name)
                                          .joins("INNER JOIN group_users AS gu ON groups.id = gu.group_id")
