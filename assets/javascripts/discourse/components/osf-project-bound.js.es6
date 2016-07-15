@@ -8,7 +8,7 @@ export default  Ember.Component.extend({
     return "project-" + this.get('projectRecord.id');
   }.property('projectRecord.id'),
 
-  href: function() {
-    return '/projects/' + this.get('projectRecord.id');
-  }.property('projectRecord.id'),
+  /*href: function() {
+    return '/forum/' + this.get('projectRecord.id');
+  }.property('projectRecord.id'),*/
 });

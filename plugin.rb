@@ -106,8 +106,13 @@ after_initialize do
     # Add methods for directly extracting these fields
     # and making them accessible to the TopicViewSerializer
     Topic.class_eval do
+        def project_guid
+            custom_fields[PROJECT_GUID_FIELD_NAME]
+        end
         def parent_guids
-            [custom_fields[PARENT_GUIDS_FIELD_NAME]].flatten
+            guids = [custom_fields[PARENT_GUIDS_FIELD_NAME]].flatten
+            guids = guids.reverse unless guids[0] == project_guid
+            guids
         end
         def topic_guid
             custom_fields[TOPIC_GUID_FIELD_NAME]
@@ -140,7 +145,7 @@ after_initialize do
 
     # override slug generation
     add_to_class :topic, :slug do
-        slug = topic_guid
+        slug = topic_guid || 'topic'
         unless read_attribute(:slug)
           if new_record?
             write_attribute(:slug, slug)
@@ -167,7 +172,7 @@ after_initialize do
     if TopicList.respond_to? :preloaded_custom_fields
         TopicList.preloaded_custom_fields << PARENT_GUIDS_FIELD_NAME
         TopicList.preloaded_custom_fields << TOPIC_GUID_FIELD_NAME
-        #TopicList.preloaded_custom_fields << PARENT_NAMES_FIELD_NAME
+        TopicList.preloaded_custom_fields << PROJECT_GUID_FIELD_NAME
     end
 
     require_dependency 'application_controller'
@@ -272,7 +277,7 @@ after_initialize do
     end
 
     Discourse::Application.routes.append do
-      mount OsfProjects::Engine, at: "/projects"
+      mount OsfProjects::Engine, at: "/forum" #/projects
     end
 
     class ::OsfProjects::ProjectsController < ::ApplicationController
@@ -285,7 +290,7 @@ after_initialize do
         skip_before_filter :check_xhr, only: [:show]
 
         def index
-            render json: { projects: [''] }
+            render json: {}
         end
 
         # [:latest, :unread, :new, :read, :posted, :bookmarks]

@@ -43,14 +43,14 @@ const ProjectsShowRoute = Discourse.Route.extend({
     if (categorySlug) {
       var category = Discourse.Category.findBySlug(categorySlug, parentCategorySlug);
       if (parentCategorySlug) {
-        params.filter = `projects/c/${parentCategorySlug}/${categorySlug}/${project.id}/l/${filter}`;
+        params.filter = `forum/c/${parentCategorySlug}/${categorySlug}/${project.id}/l/${filter}`;
       } else {
-        params.filter = `projects/c/${categorySlug}/${project.id}/l/${filter}`;
+        params.filter = `forum/c/${categorySlug}/${project.id}/l/${filter}`;
       }
 
       this.set('category', category);
     } else {
-      params.filter = `projects/${project.id}/l/${filter}`;
+      params.filter = `forum/${project.id}/l/${filter}`;
       this.set('category', null);
     }
 

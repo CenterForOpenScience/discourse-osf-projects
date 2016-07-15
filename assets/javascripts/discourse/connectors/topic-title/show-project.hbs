@@ -2,7 +2,7 @@
     {{#unless this.model.project_is_public}}
         <i class="fa fa-lock"></i>
     {{/unless}}
-    {{#each this.model.parent_guids as |parent_guid index|}}
+    {{#each this.model.parent_guids as |_pg index|}}
         {{#if index}}
             <i class="fa fa-angle-right"></i>
         {{/if}}

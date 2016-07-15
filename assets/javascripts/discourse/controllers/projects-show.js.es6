@@ -29,7 +29,7 @@ if (customNavItemHref) {
         return null;
       }
 
-      var path = "/projects/",
+      var path = "/forum/",
           category = navItem.get("category");
 
       if(category){
@@ -97,7 +97,7 @@ export default Ember.Controller.extend(BulkTopicSelection, {
     refresh() {
       const self = this;
       // TODO: this probably doesn't work anymore
-      return this.store.findFiltered('topicList', {filter: 'projects/' + this.get('project.id')}).then(function(list) {
+      return this.store.findFiltered('topicList', {filter: 'forum/' + this.get('project.id')}).then(function(list) {
         self.set("list", list);
         self.resetSelected();
       });

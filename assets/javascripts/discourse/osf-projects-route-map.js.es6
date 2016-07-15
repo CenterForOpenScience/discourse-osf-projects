@@ -1,5 +1,5 @@
 export default function() {
-  this.resource('projects', function() {
+  this.route('projects', {path: '/forum'}, function() {
     this.route('show', {path: ':project_guid'});
     this.route('showCategory', {path: '/c/:category/:project_guid'});
     this.route('showParentCategory', {path: '/c/:parent_category/:category/:project_guid'});
