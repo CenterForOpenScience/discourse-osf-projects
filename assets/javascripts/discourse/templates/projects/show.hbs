@@ -10,7 +10,7 @@
         Projects{{!--i18n "osf.projects"--}}
     {{/if}}
     <i class="fa fa-angle-right"></i>
-    {{osf-project-bound projectRecord=project projectName=list.topic_list.parent_names.[0] style="simple"}}
+    {{#link-to 'projects.show' list.topic_list.parent_guids.[0]}}{{list.topic_list.parent_names.[0]}}{{/link-to}}
   </h1>
   </div>
 </div>

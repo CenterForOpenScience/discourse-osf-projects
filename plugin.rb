@@ -9,6 +9,8 @@ register_asset 'stylesheets/osf-projects.scss'
 register_asset 'javascripts/discourse/templates/projects/index.hbs', :server_side
 register_asset 'javascripts/discourse/templates/projects/show.hbs', :server_side
 
+require 'pry'
+
 after_initialize do
     PARENT_GUIDS_FIELD_NAME = "parent_guids"
     PROJECT_GUID_FIELD_NAME = "project_guid" # DB use only: equivalent to parent_guids[0]
@@ -25,29 +27,40 @@ after_initialize do
             guid.downcase.gsub(/[^a-z0-9]/, '')
         end
 
-        def self.names_for_guids(guids)
+        def self.topics_for_guids(guids)
             topics = Topic.unscoped
                             .joins("LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)")
                             .references('tc')
                             .where('tc.name = ? AND tc.value IN (?)', TOPIC_GUID_FIELD_NAME, guids)
-            guids.map do |guid|
-                topic = topics.select { |t| t.topic_guid == guid }[0]
-                topic ? topic.title : ''
-            end
+            topics.to_a.uniq { |t| t.topic_guid }
         end
 
         def self.topic_for_guid(guid)
-            topics = Topic.unscoped
-                            .joins("LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)")
-                            .references('tc')
-                            .where('tc.name = ? AND tc.value = ?', TOPIC_GUID_FIELD_NAME, guid)
-            #[topics[0].parent_guids].flatten if topics[0]
-            topics[0]
+            topics_for_guids([guid].flatten)[0]
+        end
+
+        # guids is passed for ORDER of the array
+        # if that guid does not have a topic, it does not appear in output
+        def self.names_for_topics(guids, topics)
+            names = guids.map do |guid|
+                topic = topics.select { |t| t.topic_guid == guid }[0]
+                topic ? topic.title : nil
+            end
+            names.compact
+        end
+
+        def self.names_for_guids(guids)
+            topics = topics_for_guids(guids)
+            names_for_topics(guids, topics)
+        end
+
+        def self.name_for_guid(guid)
+            names_for_guids([guid].flatten)[0]
         end
 
         def self.can_create_project_topic(project_guid, user)
-            return true if user.staff?
             return false if user == nil
+            return true if user.staff?
             sql = <<-SQL
                 SELECT 1
                 FROM groups
@@ -56,6 +69,10 @@ after_initialize do
             SQL
             result = User.exec_sql(sql, project_guid: project_guid, user_id: user.id).to_a
             result.length > 0
+        end
+
+        def self.filter_viewable_topics(topics, user)
+            topics.select { |t| t.project_is_public || can_create_project_topic(t.project_guid, user) }
         end
 
         def self.allowed_project_topics(topics, user)
@@ -75,7 +92,7 @@ after_initialize do
     # to be changed in the future.
     PostRevisor.track_topic_field(:parent_guids) do |tc, parent_guids|
         parent_guids = parent_guids.map { |guid| OsfProjects::clean_guid(guid) }
-        tc.topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => parent_guids)
+        tc.topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => "-#{parent_guids.join('-')}-")
         tc.topic.custom_fields.update(PROJECT_GUID_FIELD_NAME => parent_guids[0])
     end
     PostRevisor.track_topic_field(:topic_guid)
@@ -98,7 +115,7 @@ after_initialize do
             topic.custom_fields.update(TOPIC_GUID_FIELD_NAME => topic_guid)
         end
 
-        topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => parent_guids)
+        topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => "-#{parent_guids.join('-')}-")
         topic.custom_fields.update(PROJECT_GUID_FIELD_NAME => parent_guids[0])
         topic.save
     end
@@ -110,9 +127,8 @@ after_initialize do
             custom_fields[PROJECT_GUID_FIELD_NAME]
         end
         def parent_guids
-            guids = [custom_fields[PARENT_GUIDS_FIELD_NAME]].flatten
-            guids = guids.reverse unless guids[0] == project_guid
-            guids
+            return nil unless custom_fields[PARENT_GUIDS_FIELD_NAME]
+            custom_fields[PARENT_GUIDS_FIELD_NAME].split('-').delete_if { |s| s.length == 0 }
         end
         def topic_guid
             custom_fields[TOPIC_GUID_FIELD_NAME]
@@ -121,8 +137,13 @@ after_initialize do
         def parent_names
             @parent_names ||= OsfProjects::names_for_guids(parent_guids)
         end
+        def project_name
+            @project_name = @parent_names[0] if @parent_names
+            @project_name ||= OsfProjects::name_for_guid(project_guid)
+        end
         def project_is_public
             return @project_is_public if @project_is_public != nil
+            return @project_is_public = true if parent_guids == nil # Not in a project, not private.
             projectGroup = Group.select(:visible).where(name: parent_guids[0]).first
             @project_is_public = projectGroup ? projectGroup.visible : false
         end
@@ -157,15 +178,34 @@ after_initialize do
     end
 
     # Register these Topic attributes to appear on the Topic page
-    TopicViewSerializer.attributes_from_topic(:parent_guids)
     TopicViewSerializer.attributes_from_topic(:topic_guid)
-    TopicViewSerializer.attributes_from_topic(:parent_names)
     TopicViewSerializer.attributes_from_topic(:project_is_public)
+    TopicViewSerializer.class_eval do
+        attributes :parent_guids
+        attributes :parent_names
+
+        def cache_parent_guids_names
+            parent_topics = OsfProjects::topics_for_guids(object.topic.parent_guids)
+            parent_topics = OsfProjects::filter_viewable_topics(parent_topics, scope.user)
+            @parent_names = OsfProjects::names_for_topics(object.topic.parent_guids, parent_topics)
+            @parent_guids = parent_topics.map { |t| t.project_guid }
+        end
+
+        def parent_guids
+            cache_parent_guids_names unless @parent_guids
+            @parent_guids
+        end
+
+        def parent_names
+            cache_parent_guids_names unless @parent_names
+            @parent_names
+        end
+    end
 
     # Register these to appear on the TopicList page/the SuggestedTopics for each item
-    add_to_serializer(:listable_topic, :parent_guids) { object.parent_guids }
+    add_to_serializer(:listable_topic, :project_guid) { object.project_guid }
     add_to_serializer(:listable_topic, :topic_guid) { object.topic_guid }
-    add_to_serializer(:listable_topic, :parent_names) { object.parent_names }
+    add_to_serializer(:listable_topic, :project_name) { object.project_name }
     add_to_serializer(:listable_topic, :project_is_public) { object.project_is_public }
 
     # Mark as preloaded so they are included in the SQL queries
@@ -229,7 +269,7 @@ after_initialize do
 
         def default_project_results(project_guid)
             default_results.joins("LEFT JOIN topic_custom_fields AS tc2 ON (topics.id = tc2.topic_id)")
-                           .where("tc2.name = ? AND tc2.value = ?", PARENT_GUIDS_FIELD_NAME, project_guid)
+                           .where("tc2.name = ? AND tc2.value LIKE ?", PARENT_GUIDS_FIELD_NAME, "%-#{project_guid}-%")
         end
 
         # Override the default results for permissions control
@@ -302,8 +342,10 @@ after_initialize do
 
                 raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
 
-                parent_guids = [project_topic.parent_guids].flatten
-                parent_names = OsfProjects::names_for_guids(parent_guids)
+                parent_topics = OsfProjects::topics_for_guids(project_topic.parent_guids)
+                parent_topics = OsfProjects::filter_viewable_topics(parent_topics, current_user)
+                parent_names = OsfProjects::names_for_topics(project_topic.parent_guids, parent_topics)
+                parent_guids = parent_topics.map { |t| t.project_guid }
 
                 list_options = {
                     per_page: PAGE_SIZE,
