@@ -5,7 +5,6 @@
 enabled_site_setting :osf_projects_enabled
 
 register_asset 'stylesheets/osf-projects.scss'
-
 register_asset 'javascripts/discourse/templates/projects/index.hbs', :server_side
 register_asset 'javascripts/discourse/templates/projects/show.hbs', :server_side
 
@@ -85,6 +84,11 @@ after_initialize do
             topics.joins("LEFT JOIN topic_custom_fields AS tc ON topics.id = tc.topic_id")
                   .where("tc.name = ? AND tc.value IN (#{allowed_project_guids.to_sql})", PROJECT_GUID_FIELD_NAME)
         end
+
+        def self.filter_to_project(project_guid, topics)
+            topics.joins("LEFT JOIN topic_custom_fields AS tc2 ON (topics.id = tc2.topic_id)")
+                  .where("tc2.name = ? AND tc2.value LIKE ?", PARENT_GUIDS_FIELD_NAME, "%-#{project_guid}-%")
+        end
     end
 
     # Register these custom fields so that they will allowed as parameters
@@ -147,6 +151,11 @@ after_initialize do
             projectGroup = Group.select(:visible).where(name: parent_guids[0]).first
             @project_is_public = projectGroup ? projectGroup.visible : false
         end
+        def topic_excerpt
+            return @topic_excerpt if @topic_excerpt != nil
+            first_comment = Post.find_by(topic_id: self.id, post_number: 2)
+            @topic_excerpt = first_comment.excerpt(200) if first_comment
+        end
 
         # Override the default results for permissions control
         old_secured = self.method(:secured)
@@ -207,6 +216,7 @@ after_initialize do
     add_to_serializer(:listable_topic, :topic_guid) { object.topic_guid }
     add_to_serializer(:listable_topic, :project_name) { object.project_name }
     add_to_serializer(:listable_topic, :project_is_public) { object.project_is_public }
+    add_to_serializer(:listable_topic, :excerpt) { object.topic_excerpt }
 
     # Mark as preloaded so they are included in the SQL queries
     if TopicList.respond_to? :preloaded_custom_fields
@@ -268,8 +278,19 @@ after_initialize do
         end
 
         def default_project_results(project_guid)
-            default_results.joins("LEFT JOIN topic_custom_fields AS tc2 ON (topics.id = tc2.topic_id)")
-                           .where("tc2.name = ? AND tc2.value LIKE ?", PARENT_GUIDS_FIELD_NAME, "%-#{project_guid}-%")
+            OsfProjects::filter_to_project(project_guid, default_results)
+        end
+
+        def list_project_top_for(project_guid, period)
+          score = "#{period}_score"
+          create_list(:top, unordered: true, topics: default_project_results(project_guid)) do |topics|
+            topics = topics.joins(:top_topic).where("top_topics.#{score} > 0")
+            if period == :yearly && @user.try(:trust_level) == TrustLevel[0]
+              topics.order(TopicQuerySQL.order_top_with_pinned_category_for(score))
+            else
+              topics.order(TopicQuerySQL.order_top_for(score))
+            end
+          end
         end
 
         # Override the default results for permissions control
@@ -301,17 +322,33 @@ after_initialize do
         end
     end
 
+    ListController.class_eval do
+        # Expose private methods
+        def self.get_best_period_for(previous_visit_at, category_id=nil)
+            ListController.best_period_for(previous_visit_at, category_id)
+        end
+    end
+
     # Routing for the project specific end-points
     OsfProjects::Engine.routes.draw do
         get '/' => 'projects#index'
         constraints(project_guid: /[a-z0-9]+/) do
             get '/:project_guid' => 'projects#show'
-            get '/c/:category/:project_guid' => 'projects#show'
-            get '/c/:parent_category/:category/:project_guid' => 'projects#show'
+            get '/:project_guid/c/:category' => 'projects#show'
+            get '/:project_guid/c/:parent_category/:category' => 'projects#show'
             Discourse.filters.each do |filter|
               get "/:project_guid/l/#{filter}" => "projects#show_#{filter}"
-              get "/c/:category/:project_guid/l/#{filter}" => "projects#show_#{filter}"
-              get "/c/:parent_category/:category/:project_guid/l/#{filter}" => "projects#show_#{filter}"
+              get "/:project_guid/c/:category/l/#{filter}" => "projects#show_#{filter}"
+              get "/:project_guid/c/:parent_category/:category/l/#{filter}" => "projects#show_#{filter}"
+            end
+
+            get "/:project_guid/l/top" => "projects#top"
+            get "/:project_guid/c/:category/l/top" => "projects#top"
+            get "/:project_guid/c/:parent_category/:category/l/top" => "projects#top"
+            TopTopic.periods.each do |period|
+              get "/:project_guid/l/top/#{period}" => "projects#top_#{period}"
+              get "/:project_guid/c/:category/l/top/#{period}" => "projects#top_#{period}"
+              get "/:project_guid/c/:parent_category/:category/l/top/#{period}" => "projects#top_#{period}"
             end
         end
     end
@@ -372,6 +409,48 @@ after_initialize do
 
         def show
           show_latest
+        end
+
+        TopTopic.periods.each do |period|
+            define_method("top_#{period}") do |options = nil|
+                project_guid = OsfProjects::clean_guid(params[:project_guid])
+                project_topic = OsfProjects::topic_for_guid(project_guid)
+                project_is_public = project_topic.project_is_public
+
+                raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
+
+                parent_topics = OsfProjects::topics_for_guids(project_topic.parent_guids)
+                parent_topics = OsfProjects::filter_viewable_topics(parent_topics, current_user)
+                parent_names = OsfProjects::names_for_topics(project_topic.parent_guids, parent_topics)
+                parent_guids = parent_topics.map { |t| t.project_guid }
+
+                list_options = {
+                    per_page: SiteSetting.topics_per_period_in_top_page,
+                    limit: true,
+                }
+                list_options.merge!(build_topic_list_options)
+                list_options.merge!(options) if options
+                if "top".freeze == current_homepage
+                  list_options[:exclude_category_ids] = get_excluded_category_ids(list_options[:category])
+                end
+
+                list = TopicQuery.new(current_user, list_options).list_project_top_for(project_guid, period)
+                list.for_period = period
+                #list.more_topics_url = construct_url_with(:next, list_options)
+                #list.prev_topics_url = construct_url_with(:prev, list_options)
+
+                list.parent_guids = parent_guids
+                list.parent_names = parent_names
+                list.project_is_public = project_is_public
+
+                respond_with_list(list)
+            end
+        end
+
+        def top(options=nil)
+          options ||= {}
+          period = ListController.get_best_period_for(current_user.try(:previous_visit_at), options[:category])
+          send("top_#{period}", options)
         end
 
         def build_topic_list_options

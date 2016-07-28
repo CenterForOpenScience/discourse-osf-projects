@@ -1,9 +1,6 @@
 <div class="list-controls">
   <div class="container">
-  {{#if canCreateTopic}}
-    <button id="create-topic" class='btn btn-default' {{action "createTopic"}}><i class='fa fa-plus'></i>{{i18n 'topic.create'}}</button>
-  {{/if}}
-  <h1 class="project-show-heading">
+  <h1 class="osf-project-show-heading">
     {{#if list.topic_list.parent_names.[1]}}
         {{#link-to 'projects.show' list.topic_list.parent_guids.[1]}}{{list.topic_list.parent_names.[1]}}{{/link-to}}
     {{else}}
@@ -15,13 +12,28 @@
   </div>
 </div>
 
-<footer class='topic-list-bottom'>
+<div class="list-controls">
+  <div class="container">
+      {{bread-crumbs categories=categories
+                     category=model.category
+                     noSubcategories=noSubcategories
+                     hideSubcategories=showingSubcategoryList}}
+
+      {{navigation-bar navItems=navItems filterMode=model.navMode}}
+
+      {{#if canCreateTopic}}
+        <button id="create-topic" class='btn btn-default' {{action "createTopic"}}><i class='fa fa-plus'></i>{{i18n 'topic.create'}}</button>
+      {{/if}}
+  </div>
+</div>
+
+<div class='container list-container'>
   {{conditional-loading-spinner condition=loading}}
 
   {{#unless loading}}
-    {{#if list.topics}}
-      {{bulk-select-button selected=selected refreshTarget=controller}}
-      {{topic-list topics=list.topics
+    {{#if list}}
+      {{!--bulk-select-button selected=selected refreshTarget=controller--}}
+      {{!--topic-list topics=list.topics
                    canBulkSelect=canBulkSelect
                    toggleBulkSelect="toggleBulkSelect"
                    bulkSelectEnabled=bulkSelectEnabled
@@ -30,7 +42,8 @@
                    currentUser=currentUser
                    order=order
                    ascending=ascending
-                   changeSort="changeSort"}}
+                   changeSort="changeSort"--}}
     {{/if}}
+    {{outlet "list-container"}}
   {{/unless}}
-</footer>
+</div>
