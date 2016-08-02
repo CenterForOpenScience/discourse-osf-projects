@@ -11,14 +11,14 @@ register_asset 'javascripts/discourse/templates/projects/show.hbs', :server_side
 require 'pry'
 
 after_initialize do
-    PARENT_GUIDS_FIELD_NAME = "parent_guids"
-    PROJECT_GUID_FIELD_NAME = "project_guid" # DB use only: equivalent to parent_guids[0]
-    TOPIC_GUID_FIELD_NAME = "topic_guid"
-    PARENT_NAMES_FIELD_NAME = "parent_names"
+    PARENT_GUIDS_FIELD_NAME = 'parent_guids'
+    PROJECT_GUID_FIELD_NAME = 'project_guid' # DB use only: equivalent to parent_guids[0]
+    TOPIC_GUID_FIELD_NAME = 'topic_guid'
+    PARENT_NAMES_FIELD_NAME = 'parent_names'
 
     module ::OsfProjects
         class Engine < ::Rails::Engine
-            engine_name "osf_projects"
+            engine_name 'osf_projects'
             isolate_namespace OsfProjects
         end
 
@@ -28,7 +28,7 @@ after_initialize do
 
         def self.topics_for_guids(guids)
             topics = Topic.unscoped
-                            .joins("LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)")
+                            .joins('LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)')
                             .references('tc')
                             .where('tc.name = ? AND tc.value IN (?)', TOPIC_GUID_FIELD_NAME, guids)
             topics.to_a.uniq { |t| t.topic_guid }
@@ -78,16 +78,30 @@ after_initialize do
             return topics if user && user.staff?
             # a visible group is a public one
             allowed_project_guids = Group.select(:name)
-                                         .joins("INNER JOIN group_users AS gu ON groups.id = gu.group_id")
-                                         .where((user ? "gu.user_id = :user_id OR " : "") + "groups.visible = 't'",
+                                         .joins('INNER JOIN group_users AS gu ON groups.id = gu.group_id')
+                                         .where((user ? 'gu.user_id = :user_id OR ' : '') + "groups.visible = 't'",
                                                  user_id: user ? user.id : nil)
-            topics.joins("LEFT JOIN topic_custom_fields AS tc ON topics.id = tc.topic_id")
+            topics.joins('LEFT JOIN topic_custom_fields AS tc ON topics.id = tc.topic_id')
                   .where("tc.name = ? AND tc.value IN (#{allowed_project_guids.to_sql})", PROJECT_GUID_FIELD_NAME)
         end
 
         def self.filter_to_project(project_guid, topics)
-            topics.joins("LEFT JOIN topic_custom_fields AS tc2 ON (topics.id = tc2.topic_id)")
-                  .where("tc2.name = ? AND tc2.value LIKE ?", PARENT_GUIDS_FIELD_NAME, "%-#{project_guid}-%")
+            topics.joins('LEFT JOIN topic_custom_fields AS tc2 ON (topics.id = tc2.topic_id)')
+                  .where('tc2.name = ? AND tc2.value LIKE ?', PARENT_GUIDS_FIELD_NAME, "%-#{project_guid}-%")
+        end
+
+        def self.contributors_for_project(project_guid)
+            User.select(:username, :name, :uploaded_avatar_id)
+                .joins('LEFT JOIN group_users AS gu ON (users.id = gu.user_id)')
+                .joins('LEFT JOIN groups AS g ON (g.id = gu.group_id)')
+                .where("g.name = '#{project_guid}'")
+                .to_a.map do |user|
+                {
+                    username: user.username,
+                    name: user.name,
+                    avatar_template: User.avatar_template(user.username, user.uploaded_avatar_id)
+                }
+            end
         end
     end
 
@@ -156,6 +170,21 @@ after_initialize do
             first_comment = Post.find_by(topic_id: self.id, post_number: 2)
             @topic_excerpt = first_comment.excerpt(200) if first_comment
         end
+        def contributors
+            OsfProjects::contributors_for_project(project_guid)
+        end
+        # override
+        def slug
+            slug = topic_guid || 'topic'
+            unless read_attribute(:slug)
+              if new_record?
+                write_attribute(:slug, slug)
+              else
+                update_column(:slug, slug)
+              end
+            end
+            slug
+        end
 
         # Override the default results for permissions control
         old_secured = self.method(:secured)
@@ -164,6 +193,7 @@ after_initialize do
             OsfProjects::allowed_project_topics(result, guardian ? guardian.user : nil)
         }
     end
+    add_to_serializer(:topic_view, :contributors) { object.topic.contributors }
 
     TopicCreator.class_eval do
         def prepare_project_topic(topic)
@@ -171,19 +201,6 @@ after_initialize do
             # Associate it with the project group
             add_groups(topic, [@opts[:parent_guids][0]])
         end
-    end
-
-    # override slug generation
-    add_to_class :topic, :slug do
-        slug = topic_guid || 'topic'
-        unless read_attribute(:slug)
-          if new_record?
-            write_attribute(:slug, slug)
-          else
-            update_column(:slug, slug)
-          end
-        end
-        slug
     end
 
     # Register these Topic attributes to appear on the Topic page
@@ -211,7 +228,7 @@ after_initialize do
         end
     end
 
-    # Register these to appear on the TopicList page/the SuggestedTopics for each item
+    # Register these to appear on the TopicList page/the SuggestedTopics for _each item_ on the topic list
     add_to_serializer(:listable_topic, :project_guid) { object.project_guid }
     add_to_serializer(:listable_topic, :topic_guid) { object.topic_guid }
     add_to_serializer(:listable_topic, :project_name) { object.project_name }
@@ -230,21 +247,26 @@ after_initialize do
     require_dependency 'topic_query'
 
     # Add custom topic list attributes and add register them to be output by the serializer
+    # This data is output once for the entire topic list
     TopicList.class_eval do
         attr_accessor :parent_guids
         attr_accessor :parent_names
         attr_accessor :project_is_public
-    end
-    TopicListSerializer.class_eval do
-        attributes :parent_guids
-        attributes :parent_names
-        attributes :project_is_public
+
         def can_create_topic
-            scope.can_create?(Topic) &&
-                object.parent_guids &&
-                OsfProjects::can_create_project_topic(object.parent_guids[0], scope.user)
+            @current_user.guardian.can_create?(Topic) &&
+                parent_guids &&
+                OsfProjects::can_create_project_topic(parent_guids[0], @current_user)
+        end
+        def contributors
+            OsfProjects::contributors_for_project(parent_guids[0])
         end
     end
+    add_to_serializer(:topic_list, :parent_guids) { object.parent_guids }
+    add_to_serializer(:topic_list, :parent_names) { object.parent_names }
+    add_to_serializer(:topic_list, :project_is_public) { object.project_is_public }
+    add_to_serializer(:topic_list, :can_create_topic) { object.can_create_topic }
+    add_to_serializer(:topic_list, :contributors) { object.contributors }
 
     TopicQuery.class_eval do
         def latest_project_results(project_guid)
@@ -354,7 +376,7 @@ after_initialize do
     end
 
     Discourse::Application.routes.append do
-      mount OsfProjects::Engine, at: "/forum" #/projects
+      mount OsfProjects::Engine, at: '/forum' #/projects
     end
 
     class ::OsfProjects::ProjectsController < ::ApplicationController
@@ -430,7 +452,7 @@ after_initialize do
                 }
                 list_options.merge!(build_topic_list_options)
                 list_options.merge!(options) if options
-                if "top".freeze == current_homepage
+                if 'top'.freeze == current_homepage
                   list_options[:exclude_category_ids] = get_excluded_category_ids(list_options[:category])
                 end
 
@@ -473,6 +495,69 @@ after_initialize do
           options[:slow_platform] = true if slow_platform?
 
           options
+        end
+    end
+
+    # With usernames being guids, we need to send real name too
+    PostSerializer.class_eval do
+        old_reply_to_user = self.instance_method(:reply_to_user)
+        define_method(:reply_to_user) do
+            data = old_reply_to_user.bind(self).call
+            data[:name] = object.reply_to_user.name
+            data
+        end
+    end
+
+    # modifying the singleton class instance
+    old_lookup_columns = AvatarLookup.public_method(:lookup_columns)
+    AvatarLookup.define_singleton_method(:lookup_columns) do
+        # We need to have this lookup the name attribute of users
+        # So that it is available to be serialized by the BasicUserSerializer
+        # So we can have the full name of the reply_to_user above
+        old_lookup_columns.call << :name
+    end
+    add_to_serializer(:basic_user, :name) { user.name }
+
+    # We need these messages to also send project guids.
+    TopicTrackingState.class_eval do
+        def self.publish_new(topic)
+          message = {
+            topic_id: topic.id,
+            message_type: 'new_topic',
+            payload: {
+              last_read_post_number: nil,
+              highest_post_number: 1,
+              created_at: topic.created_at,
+              topic_id: topic.id,
+              category_id: topic.category_id,
+              archetype: topic.archetype,
+              project_guid: topic.project_guid
+            }
+          }
+
+          group_ids = topic.category && topic.category.secure_group_ids
+
+          MessageBus.publish('/new', message.as_json, group_ids: group_ids)
+          publish_read(topic.id, 1, topic.user_id)
+        end
+
+        def self.publish_latest(topic)
+          return unless topic.archetype == 'regular'
+
+          message = {
+            topic_id: topic.id,
+            message_type: 'latest',
+            payload: {
+              bumped_at: topic.bumped_at,
+              topic_id: topic.id,
+              category_id: topic.category_id,
+              archetype: topic.archetype,
+              project_guid: topic.project_guid
+            }
+          }
+
+          group_ids = topic.category && topic.category.secure_group_ids
+          MessageBus.publish('/latest', message.as_json, group_ids: group_ids)
         end
     end
 end

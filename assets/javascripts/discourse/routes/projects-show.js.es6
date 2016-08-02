@@ -61,6 +61,8 @@ const ProjectsShowRoute = Discourse.Route.extend({
         topicController.set('period', this.get('period'));
         topicController.set('category', this.get('category'));
 
+        this.topicTrackingState.set('project_guid', project.guid);
+
         const params = controller.getProperties('order', 'ascending');
         var self = this;
         return findTopicList(this.store, this.topicTrackingState, this.get('filterMode'), params, {}).then(function(list) {

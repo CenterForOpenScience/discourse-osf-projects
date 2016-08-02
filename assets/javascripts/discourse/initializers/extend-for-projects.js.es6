@@ -7,6 +7,9 @@ import NavigationItem from 'discourse/components/navigation-item';
 import CategoryDrop from 'discourse/components/category-drop';
 import DiscoveryTopicsController from 'discourse/controllers/discovery/topics';
 import TopicListItem from 'discourse/components/topic-list-item';
+import TopicTrackingState from 'discourse/models/topic-tracking-state';
+import { on } from 'ember-addons/ember-computed-decorators';
+import ComposerEditor from 'discourse/components/composer-editor';
 
 export default {
     name: 'extend-for-projects',
@@ -56,6 +59,7 @@ export default {
         });
 
         // Have to make the extraction of the navigation mode more robust.
+        // (basically just use navMode instead of filter)
         DiscoveryTopicsController.reopen({
             showMoreUrl(period) {
                 if (this.get('model.filter').startsWith('forum')) {
@@ -76,7 +80,7 @@ export default {
                 if (category) {
                     return I18n.t('topics.bottom.category', { category: category.get('name') });
                 } else {
-                    const split = (this.get('model.navMode') || '').split('/');
+                    const split = (this.get('model.navMode') || this.get('model.filter') || '').split('/');
                     if (this.get('model.topics.length') === 0) {
                         return I18n.t("topics.none." + split[0], { category: split[1] });
                     } else {
@@ -88,7 +92,7 @@ export default {
             footerEducation: function() {
                 if (!this.get('allLoaded') || this.get('model.topics.length') > 0 || !Discourse.User.current()) { return; }
 
-                const split = (this.get('model.navMode') || '').split('/');
+                const split = (this.get('model.navMode') || this.get('model.filter') || '').split('/');
 
                 if (split[0] !== 'new' && split[0] !== 'unread') { return; }
 
@@ -102,6 +106,62 @@ export default {
             @computed()
             expandPinned() {
               return this.get('topic.excerpt');
+            }
+        });
+
+        // Filter some messages by the project_guid to avoid irrelevant notifications
+        TopicTrackingState.reopen({
+            notify(data) {
+                if ((data.message_type != 'latest' && data.message_type != 'new_topic') ||
+                     data.payload.project_guid == this.project_guid) {
+                    this._super();
+                }
+            },
+        });
+
+        var contributorSearch = function(term) {
+            // Longest prefix size in common
+            var charsInCommon = function(a, b) {
+                var count = 0;
+                for (var i = 0; i < a.length && i < b.length; i++) {
+                    if (a[i].toLowerCase() == b[i].toLowerCase()) {
+                        count++;
+                    } else {
+                        break;
+                    }
+                }
+                return count;
+            };
+
+            var matchStrength = function(term, user) {
+                return Math.max(charsInCommon(term, user.username), charsInCommon(term, user.name));
+            };
+
+            var topicModel = Discourse.__container__.lookup('controller:topic').model;
+            var contributors = topicModel.contributors;
+            contributors = contributors.sort((a, b) => { return matchStrength(term, b) - matchStrength(term, a); });
+
+            var results = contributors;
+            results.users = contributors.copy();
+            results.groups = [];
+            return results;
+        };
+
+        // Patch so that only contributors are listed for @mentions
+        ComposerEditor.reopen({
+            @on('didInsertElement')
+            _composerEditorInit() {
+                this._super();
+
+                const template = this.container.lookup('template:user-selector-autocomplete.raw');
+                const $input = this.$('.d-editor-input');
+                $input.autocomplete('destroy');
+                $input.autocomplete({
+                    template,
+                    dataSource: term => contributorSearch(term),
+                    key: "@",
+                    transformComplete: v => v.username || v.name
+                });
             }
         });
     }
