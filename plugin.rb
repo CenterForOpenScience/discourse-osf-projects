@@ -171,7 +171,7 @@ after_initialize do
             @topic_excerpt = first_comment.excerpt(200) if first_comment
         end
         def contributors
-            OsfProjects::contributors_for_project(project_guid)
+            OsfProjects::contributors_for_project(project_guid) if project_guid
         end
         # override
         def slug
@@ -259,7 +259,7 @@ after_initialize do
                 OsfProjects::can_create_project_topic(parent_guids[0], @current_user)
         end
         def contributors
-            OsfProjects::contributors_for_project(parent_guids[0])
+            OsfProjects::contributors_for_project(parent_guids[0]) if parent_guids
         end
     end
     add_to_serializer(:topic_list, :parent_guids) { object.parent_guids }

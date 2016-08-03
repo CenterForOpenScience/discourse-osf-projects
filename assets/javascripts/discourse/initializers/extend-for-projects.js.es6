@@ -120,26 +120,12 @@ export default {
         });
 
         var contributorSearch = function(term) {
-            // Longest prefix size in common
-            var charsInCommon = function(a, b) {
-                var count = 0;
-                for (var i = 0; i < a.length && i < b.length; i++) {
-                    if (a[i].toLowerCase() == b[i].toLowerCase()) {
-                        count++;
-                    } else {
-                        break;
-                    }
-                }
-                return count;
-            };
-
-            var matchStrength = function(term, user) {
-                return Math.max(charsInCommon(term, user.username), charsInCommon(term, user.name));
-            };
-
             var topicModel = Discourse.__container__.lookup('controller:topic').model;
             var contributors = topicModel.contributors;
-            contributors = contributors.sort((a, b) => { return matchStrength(term, b) - matchStrength(term, a); });
+            contributors = contributors.filter(c => {
+                return c.username.toLowerCase().startsWith(term.toLowerCase()) ||
+                       c.name.toLowerCase().startsWith(term.toLowerCase());
+            });
 
             var results = contributors;
             results.users = contributors.copy();
