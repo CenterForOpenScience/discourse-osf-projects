@@ -171,7 +171,14 @@ after_initialize do
             @topic_excerpt = first_comment.excerpt(200) if first_comment
         end
         def contributors
-            OsfProjects::contributors_for_project(project_guid) if project_guid
+            return @contributors if @contributors != nil
+            @contributors = OsfProjects::contributors_for_project(project_guid) if project_guid
+        end
+        def excerpt_mentioned_users
+            return unless contributors && topic_excerpt
+            topic_excerpt.scan(/@[a-z0-9]+/).map { |u|
+                contributors.select {|c| c[:username] == u[1..-1] }
+            }.uniq.flatten
         end
         # override
         def slug
@@ -234,6 +241,7 @@ after_initialize do
     add_to_serializer(:listable_topic, :project_name) { object.project_name }
     add_to_serializer(:listable_topic, :project_is_public) { object.project_is_public }
     add_to_serializer(:listable_topic, :excerpt) { object.topic_excerpt }
+    add_to_serializer(:listable_topic, :excerpt_mentioned_users) { object.excerpt_mentioned_users }
 
     # Mark as preloaded so they are included in the SQL queries
     if TopicList.respond_to? :preloaded_custom_fields
@@ -359,16 +367,16 @@ after_initialize do
             get '/:project_guid/c/:category' => 'projects#show'
             get '/:project_guid/c/:parent_category/:category' => 'projects#show'
             Discourse.filters.each do |filter|
-              get "/:project_guid/l/#{filter}" => "projects#show_#{filter}"
+              get "/:project_guid/#{filter}" => "projects#show_#{filter}"
               get "/:project_guid/c/:category/l/#{filter}" => "projects#show_#{filter}"
               get "/:project_guid/c/:parent_category/:category/l/#{filter}" => "projects#show_#{filter}"
             end
 
-            get "/:project_guid/l/top" => "projects#top"
+            get "/:project_guid/top" => "projects#top"
             get "/:project_guid/c/:category/l/top" => "projects#top"
             get "/:project_guid/c/:parent_category/:category/l/top" => "projects#top"
             TopTopic.periods.each do |period|
-              get "/:project_guid/l/top/#{period}" => "projects#top_#{period}"
+              get "/:project_guid/top/#{period}" => "projects#top_#{period}"
               get "/:project_guid/c/:category/l/top/#{period}" => "projects#top_#{period}"
               get "/:project_guid/c/:parent_category/:category/l/top/#{period}" => "projects#top_#{period}"
             end

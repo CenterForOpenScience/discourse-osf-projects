@@ -15,9 +15,9 @@ export default {
       app["ProjectsShowParentCategory" + filter.capitalize() + "Route"] = ProjectsShowRoute.extend({ navMode: filter });
     });
 
-    app.ProjectsTopRoute = ProjectsShowRoute.extend({ navMode: 'top', period: 'yearly' });
-    app.ProjectsTopCategoryRoute = ProjectsShowRoute.extend({ navMode: 'top', period: 'yearly' });
-    app.ProjectsTopParentCategoryRoute = ProjectsShowRoute.extend({ navMode: 'top', period: 'yearly' });
+    app.ProjectsTopRoute = ProjectsShowRoute.extend({ navMode: 'top' });
+    app.ProjectsTopCategoryRoute = ProjectsShowRoute.extend({ navMode: 'top' });
+    app.ProjectsTopParentCategoryRoute = ProjectsShowRoute.extend({ navMode: 'top'});
 
     site.get('periods').forEach(period => {
       app["ProjectsTop" + period.capitalize() + "Route"] = ProjectsShowRoute.extend({ navMode: 'top', period: period });

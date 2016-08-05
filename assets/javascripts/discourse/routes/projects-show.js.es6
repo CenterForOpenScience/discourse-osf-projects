@@ -1,9 +1,12 @@
 /*jshint esversion: 6*/
 import Composer from 'discourse/models/composer';
 import showModal from 'discourse/lib/show-modal';
-import { findTopicList } from 'discourse/routes/build-topic-route';
+import { filterQueryParams, findTopicList } from 'discourse/routes/build-topic-route';
+import { queryParams } from 'discourse/controllers/discovery-sortable';
 
 const ProjectsShowRoute = Discourse.Route.extend({
+    queryParams,
+    controllerName: 'projects.show',
     navMode: 'latest',
     filterMode: 'latest',
     period: null,
@@ -28,11 +31,11 @@ const ProjectsShowRoute = Discourse.Route.extend({
             if (params.parent_category) {
                 f += params.parent_category + '/';
             }
-            f += params.category + '/';
+            f += params.category + '/l/';
         }
-        f += 'l/' + this.get('navMode');
-        if (params.period) {
-            f += '/' + params.period;
+        f += this.get('navMode');
+        if (this.get('period')) {
+            f += '/' + this.get('period');
         }
         this.set('filterMode', f);
 
@@ -44,33 +47,35 @@ const ProjectsShowRoute = Discourse.Route.extend({
             this.set('parentCategorySlug', params.parent_category);
         }
 
-        var project = {
+        var model = {
             guid: project_guid,
             navMode: this.get('navMode'),
             filter: this.get('filterMode'),
             category: this.get('category'),
+            queryParams: filterQueryParams(params),
         };
 
-        return project;
+        return model;
     },
 
-    afterModel(project) {
+    afterModel(model) {
         const controller = this.controllerFor('projects.show');
         const topicController = this.controllerFor('discovery.topics');
-        controller.set('loading', true);
-        topicController.set('period', this.get('period'));
         topicController.set('category', this.get('category'));
+        topicController.setProperties(model.queryParams);
 
-        this.topicTrackingState.set('project_guid', project.guid);
+        // Track only this project_guid
+        this.topicTrackingState.set('project_guid', model.guid);
 
-        const params = controller.getProperties('order', 'ascending');
         var self = this;
-        return findTopicList(this.store, this.topicTrackingState, this.get('filterMode'), params, {}).then(function(list) {
+        // by returning the promise, Ember pauses until it completes. (Ember does not use the value)
+        return findTopicList(this.store, this.topicTrackingState, this.get('filterMode'), model.queryParams, {}).then(function(list) {
             list.set('navMode', self.get('navMode'));
             controller.set('list', list);
-            controller.set('loading', false);
+            controller.set('period', list.get('for_period'));
             controller.set('canCreateTopic', list.get('can_create_topic'));
             topicController.set('model', list);
+            topicController.set('period', list.get('for_period'));
         });
     },
 
@@ -87,10 +92,16 @@ const ProjectsShowRoute = Discourse.Route.extend({
 
     setupController(controller, model) {
         // Make sure it uses the projects.show controller, even though there
-        // are many differently routes all with slightly different names.
+        // are many different routes all with slightly different names. (showUnread, showNew, etc...)
         this.controllerFor('projects.show').setProperties({
             model,
         });
+    },
+
+    resetController(controller, isExiting) {
+      if (isExiting) {
+        this.controllerFor('discovery.topics').setProperties({ order: "default", ascending: false });
+      }
     },
 
     actions: {
@@ -116,21 +127,6 @@ const ProjectsShowRoute = Discourse.Route.extend({
                 }
             });
         },
-
-        didTransition() {
-            this.controllerFor('projects.show')._showFooter();
-            return true;
-        },
-
-        willTransition(transition) {
-            //if (!Discourse.SiteSettings.show_filter_by_tag) { return true; }
-
-            //if ((transition.targetName.indexOf('discovery.parentCategory') !== -1 ||
-            //    transition.targetName.indexOf('discovery.category') !== -1) && !transition.queryParams.allTags ) {
-            //this.transitionTo('/projects' + transition.intent.url + '/' + this.currentModel.get('id'));
-            //}
-            return true;
-        }
     }
 });
 

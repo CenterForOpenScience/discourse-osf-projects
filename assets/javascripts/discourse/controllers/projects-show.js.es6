@@ -1,7 +1,8 @@
 /*jshint esversion: 6*/
 
-import BulkTopicSelection from 'discourse/mixins/bulk-topic-selection';
-import DiscoveryTopicsController from 'discourse/controllers/discovery/topics';
+// This file is highly based on discourse-tagging
+
+import DiscoverySortableController from 'discourse/controllers/discovery-sortable';
 
 var NavItem, extraNavItemProperties, customNavItemHref;
 
@@ -36,10 +37,8 @@ if (customNavItemHref) {
                 if (navItem.get('noSubcategories')) {
                     path += '/none';
                 }
-                path += '/';
+                path += '/l/';
             }
-
-            path += 'l/';
             return path + name.replace(' ', '-');
         } else {
             return null;
@@ -47,25 +46,11 @@ if (customNavItemHref) {
     });
 }
 
-export default Ember.Controller.extend(BulkTopicSelection, {
+export default DiscoverySortableController.extend({
     needs: ['application'],
 
-    //project: null,
     list: null,
-    canAdminTag: Ember.computed.alias('currentUser.staff'),
-    //filterMode: null,
-    //navMode: 'latest',
-    loading: false,
     canCreateTopic: false,
-    order: 'default',
-    ascending: false,
-    status: null,
-    state: null,
-    search: null,
-    max_posts: null,
-    q: null,
-
-    queryParams: ['order', 'ascending', 'status', 'state', 'search', 'max_posts', 'q'],
 
     navItems: function() {
         var navList = NavItem.buildList(this.get('model.category'), {
@@ -81,35 +66,4 @@ export default Ember.Controller.extend(BulkTopicSelection, {
     categories: function() {
         return Discourse.Category.list();
     }.property(),
-
-    loadMoreTopics() {
-        return this.get('list').loadMore();
-    },
-
-    _showFooter: function() {
-        this.set('controllers.application.showFooter', !this.get('list.canLoadMore'));
-    }.observes('list.canLoadMore'),
-
-    actions: {
-        changeSort(sortBy) {
-            if (sortBy === this.get('order')) {
-                this.toggleProperty('ascending');
-            } else {
-                this.setProperties({
-                    order: sortBy,
-                    ascending: false
-                });
-            }
-            this.send('invalidateModel');
-        },
-
-        refresh() {
-            const self = this;
-            // TODO: this probably doesn't work anymore
-            return this.store.findFiltered('topicList', {filter: 'forum/' + this.get('model.guid')}).then(function(list) {
-                self.set('list', list);
-                self.resetSelected();
-            });
-        },
-    }
 });

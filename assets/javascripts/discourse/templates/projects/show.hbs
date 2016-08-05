@@ -31,19 +31,6 @@
   {{conditional-loading-spinner condition=loading}}
 
   {{#unless loading}}
-    {{#if list}}
-      {{!--bulk-select-button selected=selected refreshTarget=controller--}}
-      {{!--topic-list topics=list.topics
-                   canBulkSelect=canBulkSelect
-                   toggleBulkSelect="toggleBulkSelect"
-                   bulkSelectEnabled=bulkSelectEnabled
-                   selected=selected
-                   showPosters=true
-                   currentUser=currentUser
-                   order=order
-                   ascending=ascending
-                   changeSort="changeSort"--}}
-    {{/if}}
     {{outlet "list-container"}}
   {{/unless}}
 </div>

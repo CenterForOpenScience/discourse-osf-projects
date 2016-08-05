@@ -62,12 +62,13 @@ export default {
         // (basically just use navMode instead of filter)
         DiscoveryTopicsController.reopen({
             showMoreUrl(period) {
+                let url = '';
                 if (this.get('model.filter').startsWith('forum')) {
-                    return '/' + this.get('model.filter') + '/' + period;
+                    url = '/forum/' + this.get('model.topic_list').parent_guids[0];
                 }
-                let url = '', category = this.get('category');
+                let category = this.get('category');
                 if (category) {
-                    url = '/c/' + Discourse.Category.slugFor(category) + (this.get('noSubcategories') ? '/none' : '') + '/l';
+                    url += '/c/' + Discourse.Category.slugFor(category) + (this.get('noSubcategories') ? '/none' : '') + '/l';
                 }
                 url += '/top/' + period;
                 return url;
