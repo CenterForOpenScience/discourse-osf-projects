@@ -10,6 +10,7 @@ import TopicListItem from 'discourse/components/topic-list-item';
 import TopicTrackingState from 'discourse/models/topic-tracking-state';
 import { on } from 'ember-addons/ember-computed-decorators';
 import ComposerEditor from 'discourse/components/composer-editor';
+import DiscoveryTopics from 'discourse/controllers/discovery/topics';
 
 export default {
     name: 'extend-for-projects',
@@ -56,6 +57,17 @@ export default {
                     fixCategoryUrls();
                 },
             },
+        });
+
+        DiscoveryTopics.reopen({
+            actions: {
+                // This schedules a rerender, so we need to also schedule
+                // DOM updating
+                toggleBulkSelect() {
+                    this._super();
+                    Ember.run.scheduleOnce('afterRender', fixCategoryUrls);
+                },
+            }
         });
 
         // Have to make the extraction of the navigation mode more robust.

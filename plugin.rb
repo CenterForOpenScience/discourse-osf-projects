@@ -262,6 +262,7 @@ after_initialize do
         attr_accessor :project_is_public
 
         def can_create_topic
+            return false unless @current_user
             @current_user.guardian.can_create?(Topic) &&
                 parent_guids &&
                 OsfProjects::can_create_project_topic(parent_guids[0], @current_user)
