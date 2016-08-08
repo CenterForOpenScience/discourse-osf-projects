@@ -20,7 +20,7 @@ export default {
         // Setting this value is what makes new topics actually able to appear in the target project
         Composer.serializeOnCreate('parent_guids');
 
-        function fixCategoryUrls() {
+        function fixUrls() {
             var projectGuid = null;
             var navMode = '';
 
@@ -56,20 +56,20 @@ export default {
 
         withPluginApi('0.1', api => {
             api.onPageChange((url, title) => {
-                Ember.run.scheduleOnce('afterRender', fixCategoryUrls);
+                Ember.run.scheduleOnce('afterRender', fixUrls);
             });
         });
 
         TopicView.reopen({
             domChange: function() {
-                Ember.run.scheduleOnce('afterRender', fixCategoryUrls);
+                Ember.run.scheduleOnce('afterRender', fixUrls);
             }.on('didInsertElement')
         });
 
         TopicModel.reopen({
             updateFromJson(json) {
                 this._super(json);
-                Ember.run.scheduleOnce('afterRender', fixCategoryUrls);
+                Ember.run.scheduleOnce('afterRender', fixUrls);
             }
         });
 
@@ -87,7 +87,7 @@ export default {
             actions: {
                 expand: function() {
                     this._super();
-                    Ember.run.scheduleOnce('afterRender', fixCategoryUrls);
+                    Ember.run.scheduleOnce('afterRender', fixUrls);
                 },
             },
         });
@@ -98,7 +98,7 @@ export default {
                 // DOM updating
                 toggleBulkSelect() {
                     this._super();
-                    Ember.run.scheduleOnce('afterRender', fixCategoryUrls);
+                    Ember.run.scheduleOnce('afterRender', fixUrls);
                 },
             }
         });
