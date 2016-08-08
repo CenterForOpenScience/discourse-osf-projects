@@ -11,6 +11,8 @@ import TopicTrackingState from 'discourse/models/topic-tracking-state';
 import { on } from 'ember-addons/ember-computed-decorators';
 import ComposerEditor from 'discourse/components/composer-editor';
 import DiscoveryTopics from 'discourse/controllers/discovery/topics';
+import TopicView from 'discourse/views/topic';
+import TopicModel from 'discourse/models/topic';
 
 export default {
     name: 'extend-for-projects',
@@ -19,25 +21,56 @@ export default {
         Composer.serializeOnCreate('parent_guids');
 
         function fixCategoryUrls() {
-            var reg = new RegExp('forum\/([0-9a-z]+)');
-            var match = reg.exec(window.location.toString());
-            if (match) {
-                var project_guid = match[1];
-                var categoryLinks = document.querySelectorAll('.cat a, .category a');
+            var projectGuid = null;
+            var navMode = '';
+
+            var topicsModel = Discourse.__container__.lookup('controller:discovery.topics').model;
+            if (topicsModel) {
+                projectGuid = topicsModel.topic_list.parent_guids[0];
+                navMode = topicsModel.navMode;
+            }
+
+            var topicModel = Discourse.__container__.lookup('controller:topic').model;
+            if (topicModel) {
+                projectGuid = topicModel.parent_guids[0];
+            }
+
+            if (projectGuid) {
+                var categoryLinks = document.querySelectorAll('.cat a, a.bullet');
                 categoryLinks.forEach(function(link) {
                     if (!link.pathname.startsWith('/forum/')) {
-                        link.pathname = '/forum/' + project_guid + link.pathname;
+                        link.pathname = '/forum/' + projectGuid + link.pathname;
+                    }
+                });
+
+                var footerLinks = document.querySelectorAll('h3 a');
+                footerLinks.forEach(function(link) {
+                    if (link.pathname == '/' || link.pathname == '/latest') {
+                        link.pathname = '/forum/' + projectGuid;
+                    } else if (link.pathname == '/categories') {
+                        link.pathname = '/forum/' + projectGuid + '/' + navMode;
                     }
                 });
             }
         }
 
-        var api;
-        withPluginApi('0.1', _api => {
-            api = _api;
+        withPluginApi('0.1', api => {
             api.onPageChange((url, title) => {
-                fixCategoryUrls();
+                Ember.run.scheduleOnce('afterRender', fixCategoryUrls);
             });
+        });
+
+        TopicView.reopen({
+            domChange: function() {
+                Ember.run.scheduleOnce('afterRender', fixCategoryUrls);
+            }.on('didInsertElement')
+        });
+
+        TopicModel.reopen({
+            updateFromJson(json) {
+                this._super(json);
+                Ember.run.scheduleOnce('afterRender', fixCategoryUrls);
+            }
         });
 
         // Make the navigation (latest, new, unread) buttons
@@ -54,7 +87,7 @@ export default {
             actions: {
                 expand: function() {
                     this._super();
-                    fixCategoryUrls();
+                    Ember.run.scheduleOnce('afterRender', fixCategoryUrls);
                 },
             },
         });

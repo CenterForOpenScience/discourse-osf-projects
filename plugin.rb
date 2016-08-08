@@ -410,10 +410,11 @@ after_initialize do
 
                 raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
 
-                parent_topics = OsfProjects::topics_for_guids(project_topic.parent_guids)
+                parent_guids = project_topic.parent_guids
+                # parent_topics will become out of order, but names_for_topics restores order
+                parent_topics = OsfProjects::topics_for_guids(parent_guids)
                 parent_topics = OsfProjects::filter_viewable_topics(parent_topics, current_user)
-                parent_names = OsfProjects::names_for_topics(project_topic.parent_guids, parent_topics)
-                parent_guids = parent_topics.map { |t| t.project_guid }
+                parent_names = OsfProjects::names_for_topics(parent_guids, parent_topics)
 
                 list_options = {
                     per_page: PAGE_SIZE,
@@ -450,10 +451,11 @@ after_initialize do
 
                 raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
 
-                parent_topics = OsfProjects::topics_for_guids(project_topic.parent_guids)
+                parent_guids = project_topic.parent_guids
+                # parent_topics will become out of order, but names_for_topics restores order
+                parent_topics = OsfProjects::topics_for_guids(parent_guids)
                 parent_topics = OsfProjects::filter_viewable_topics(parent_topics, current_user)
-                parent_names = OsfProjects::names_for_topics(project_topic.parent_guids, parent_topics)
-                parent_guids = parent_topics.map { |t| t.project_guid }
+                parent_names = OsfProjects::names_for_topics(parent_guids, parent_topics)
 
                 list_options = {
                     per_page: SiteSetting.topics_per_period_in_top_page,
