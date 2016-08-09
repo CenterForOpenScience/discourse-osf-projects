@@ -41,6 +41,7 @@ after_initialize do
         # guids is passed for ORDER of the array
         # if that guid does not have a topic, it does not appear in output
         def self.names_for_topics(guids, topics)
+            return nil unless guids
             names = guids.map do |guid|
                 topic = topics.select { |t| t.topic_guid == guid }[0]
                 topic ? topic.title : nil
