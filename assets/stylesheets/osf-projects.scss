@@ -13,3 +13,10 @@
 button.share.private, button.invite-topic {
     display: none;
 }
+
+/* Since we can't display project based category counts without extra computation
+   it is better to just not display category topic counts at all
+*/
+.select2-drop .topic-count {
+    display: none;
+}

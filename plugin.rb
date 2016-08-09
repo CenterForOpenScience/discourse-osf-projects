@@ -206,7 +206,7 @@ after_initialize do
         def prepare_project_topic(topic)
             return unless @opts[:archetype] == Archetype.default
             # Associate it with the project group
-            add_groups(topic, [@opts[:parent_guids][0]])
+            add_groups(topic, [@opts[:parent_guids][0]]) if @opts[:parent_guids]
         end
     end
 

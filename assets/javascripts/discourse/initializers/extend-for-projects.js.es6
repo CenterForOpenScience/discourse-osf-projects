@@ -13,6 +13,7 @@ import ComposerEditor from 'discourse/components/composer-editor';
 import DiscoveryTopics from 'discourse/controllers/discovery/topics';
 import TopicView from 'discourse/views/topic';
 import TopicModel from 'discourse/models/topic';
+import MountWidget from 'discourse/components/mount-widget';
 
 export default {
     name: 'extend-for-projects',
@@ -25,13 +26,13 @@ export default {
             var navMode = '';
 
             var topicsModel = Discourse.__container__.lookup('controller:discovery.topics').model;
-            if (topicsModel) {
+            if (topicsModel && topicsModel.topic_list.parent_guids) {
                 projectGuid = topicsModel.topic_list.parent_guids[0];
                 navMode = topicsModel.navMode;
             }
 
             var topicModel = Discourse.__container__.lookup('controller:topic').model;
-            if (topicModel) {
+            if (topicModel && topicModel.parent_guids) {
                 projectGuid = topicModel.parent_guids[0];
             }
 
@@ -45,10 +46,24 @@ export default {
 
                 var footerLinks = document.querySelectorAll('h3 a');
                 footerLinks.forEach(function(link) {
-                    if (link.pathname == '/' || link.pathname == '/latest') {
-                        link.pathname = '/forum/' + projectGuid;
-                    } else if (link.pathname == '/categories') {
-                        link.pathname = '/forum/' + projectGuid + '/' + navMode;
+                    if (link.id == '') {
+                        if (link.pathname == '/latest') {
+                            link.pathname = '/forum/' + projectGuid + link.pathname;
+                        }
+                        return;
+                    }
+                    // These links were made by the link-to helper so they need to be modified
+                    // in the ember View. This seems kinda convoluted...
+                    var view = Ember.View.views[link.id];
+                    var href = view.get('href');
+                    if (href == '/' || href == '/latest') {
+                        view.set('href', '/forum/' + projectGuid); // for appearance
+                        view.set('loadedParams.targetRouteName', 'projects.show');
+                        view.set('loadedParams.models', [projectGuid]);
+                    } else if (href == '/categories') {
+                        view.set('href', '/forum/' + projectGuid + '/' + navMode);
+                        view.set('loadedParams.targetRouteName', 'projects.show' + navMode.capitalize());
+                        view.set('loadedParams.models', [projectGuid]);
                     }
                 });
             }
@@ -70,6 +85,14 @@ export default {
             updateFromJson(json) {
                 this._super(json);
                 Ember.run.scheduleOnce('afterRender', fixUrls);
+            }
+        });
+
+        // After "mounting"/rendering of the topic/poststream "widget"
+        MountWidget.reopen({
+            afterRender() {
+                this._super();
+                fixUrls();
             }
         });
 
