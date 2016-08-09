@@ -342,12 +342,14 @@ after_initialize do
             end
             raise Discourse::NotFound if topic == nil
 
-            project_guid = topic.parent_guids[0]
-            project_topic = OsfProjects::topic_for_guid(project_guid)
-            raise Discourse::NotFound unless project_topic
+            if topic.parent_guids
+                project_guid = topic.parent_guids[0]
+                project_topic = OsfProjects::topic_for_guid(project_guid)
+                raise Discourse::NotFound unless project_topic
 
-            project_is_public = project_topic.project_is_public
-            raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
+                project_is_public = project_topic.project_is_public
+                raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
+            end
 
             old_show.bind(self).call
         end
