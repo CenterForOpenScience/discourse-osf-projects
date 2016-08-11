@@ -244,6 +244,14 @@ after_initialize do
     add_to_serializer(:listable_topic, :excerpt) { object.topic_excerpt }
     add_to_serializer(:listable_topic, :excerpt_mentioned_users) { object.excerpt_mentioned_users }
 
+    ListableTopicSerializer.class_eval do
+        attributes :include_excerpt_mentioned_users
+
+        def include_excerpt_mentioned_users
+            self.include_excerpt_mentioned_users?
+        end
+    end
+
     # Mark as preloaded so they are included in the SQL queries
     if TopicList.respond_to? :preloaded_custom_fields
         TopicList.preloaded_custom_fields << PARENT_GUIDS_FIELD_NAME

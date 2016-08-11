@@ -87,5 +87,8 @@ The parent-project-label.raw.hbs file is added to the topic-list-tags plugin out
 
 The show-project.hbs file inserted into the topic-title plugin outlet displays the entire chain of containing and parent projects that the topic is contained in.
 
+##CSS
+Finally, there is a osf-projects.scss file with a minimum number of styles to support the project/forum page.
+
 ##Further Work/Bugs to Fix
 Make view-only links to the forum for private projects.
