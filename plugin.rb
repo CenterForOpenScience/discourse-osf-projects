@@ -107,7 +107,7 @@ after_initialize do
     end
 
     # Register these custom fields so that they will allowed as parameters
-    # We don't pass a block when we don't want to allow these guids
+    # We don't pass a block so that these guids
     # to be changed in the future.
     PostRevisor.track_topic_field(:parent_guids) do |tc, parent_guids|
         parent_guids = parent_guids.map { |guid| OsfProjects::clean_guid(guid) }

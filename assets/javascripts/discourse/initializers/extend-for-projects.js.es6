@@ -6,7 +6,6 @@ import computed from 'ember-addons/ember-computed-decorators';
 import NavigationItem from 'discourse/components/navigation-item';
 import CategoryDrop from 'discourse/components/category-drop';
 import DiscoveryTopicsController from 'discourse/controllers/discovery/topics';
-import TopicListItem from 'discourse/components/topic-list-item';
 import TopicTrackingState from 'discourse/models/topic-tracking-state';
 import { on } from 'ember-addons/ember-computed-decorators';
 import ComposerEditor from 'discourse/components/composer-editor';
@@ -96,16 +95,6 @@ export default {
             }
         });
 
-        // Make the navigation (latest, new, unread) buttons
-        // more robust in determining if they are active
-        NavigationItem.reopen({
-            @computed("content.filterMode", "filterMode")
-            active(contentFilterMode, filterMode) {
-              return contentFilterMode === filterMode ||
-                     contentFilterMode.indexOf(filterMode) !== -1;
-            },
-        });
-
         CategoryDrop.reopen({
             actions: {
                 expand: function() {
@@ -124,6 +113,17 @@ export default {
                     Ember.run.scheduleOnce('afterRender', fixUrls);
                 },
             }
+        });
+
+        // Make the navigation (latest, new, unread) buttons
+        // more robust in determining if they are active since our routes/filterModes
+        // will start with /forum/:project_guid
+        NavigationItem.reopen({
+            @computed("content.filterMode", "filterMode")
+            active(contentFilterMode, filterMode) {
+              return contentFilterMode === filterMode ||
+                     contentFilterMode.indexOf(filterMode) !== -1;
+            },
         });
 
         // Have to make the extraction of the navigation mode more robust.
@@ -169,13 +169,6 @@ export default {
                     userPrefsUrl: Discourse.getURL("/users/") + (Discourse.User.currentProp("username_lower")) + "/preferences"
                 });
             }.property('allLoaded', 'model.topics.length')
-        });
-
-        TopicListItem.reopen({
-            @computed()
-            expandPinned() {
-              return this.get('topic.excerpt');
-            }
         });
 
         // Filter some messages by the project_guid to avoid irrelevant notifications

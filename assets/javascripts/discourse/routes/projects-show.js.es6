@@ -79,6 +79,7 @@ const ProjectsShowRoute = Discourse.Route.extend({
         });
     },
 
+    // Title of the page for the browser window/tab
     titleToken() {
         const filterText = I18n.t('filters.' + this.get('navMode').replace('/', '.') + '.title');
         var controller = this.controllerFor('projects.show');
@@ -102,6 +103,10 @@ const ProjectsShowRoute = Discourse.Route.extend({
       if (isExiting) {
         this.controllerFor('discovery.topics').setProperties({ order: "default", ascending: false });
       }
+    },
+
+    // No need to do anything. We just need to handle this action/message the discovery.topics.
+    loadingComplete(){
     },
 
     actions: {

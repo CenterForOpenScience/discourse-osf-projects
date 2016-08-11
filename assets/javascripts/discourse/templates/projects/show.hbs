@@ -3,10 +3,8 @@
   <h1 class="osf-project-show-heading">
     {{#if list.topic_list.parent_names.[1]}}
         {{#link-to 'projects.show' list.topic_list.parent_guids.[1]}}{{list.topic_list.parent_names.[1]}}{{/link-to}}
-    {{else}}
-        Projects{{!--i18n "osf.projects"--}}
+        <i class="fa fa-angle-right"></i>
     {{/if}}
-    <i class="fa fa-angle-right"></i>
     {{#link-to 'projects.show' list.topic_list.parent_guids.[0]}}{{list.topic_list.parent_names.[0]}}{{/link-to}}
   </h1>
   </div>
@@ -28,9 +26,5 @@
 </div>
 
 <div class='container list-container'>
-  {{conditional-loading-spinner condition=loading}}
-
-  {{#unless loading}}
-    {{outlet "list-container"}}
-  {{/unless}}
+  {{outlet "list-container"}}
 </div>
