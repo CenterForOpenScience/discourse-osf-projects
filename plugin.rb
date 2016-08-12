@@ -420,8 +420,9 @@ after_initialize do
             define_method("show_#{filter}") do
                 project_guid = OsfProjects::clean_guid(params[:project_guid])
                 project_topic = OsfProjects::topic_for_guid(project_guid)
-                project_is_public = project_topic.project_is_public
+                raise Discourse::NotFound unless project_topic
 
+                project_is_public = project_topic.project_is_public
                 raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
 
                 parent_guids = project_topic.parent_guids
@@ -461,8 +462,9 @@ after_initialize do
             define_method("top_#{period}") do |options = nil|
                 project_guid = OsfProjects::clean_guid(params[:project_guid])
                 project_topic = OsfProjects::topic_for_guid(project_guid)
+                raise Discourse::NotFound unless project_topic
+                
                 project_is_public = project_topic.project_is_public
-
                 raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
 
                 parent_guids = project_topic.parent_guids
