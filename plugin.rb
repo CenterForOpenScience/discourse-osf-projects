@@ -237,7 +237,10 @@ after_initialize do
     end
 
     # Register these to appear on the TopicList page/the SuggestedTopics for _each item_ on the topic list
-    add_to_serializer(:listable_topic, :project_guid) { object.project_guid }
+    add_to_serializer(:listable_topic, :project_guid) {
+        Rails.logger.warn("ListableTopicSerializer.project_guid called. Value: " + object.project_guid + " Trace: " + caller)
+        object.project_guid
+    }
     add_to_serializer(:listable_topic, :topic_guid) { object.topic_guid }
     add_to_serializer(:listable_topic, :project_name) { object.project_name }
     add_to_serializer(:listable_topic, :project_is_public) { object.project_is_public }

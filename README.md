@@ -92,3 +92,5 @@ Finally, there is a osf-projects.scss file with a minimum number of styles to su
 
 ##Further Work/Bugs to Fix
 Make view-only links to the forum for private projects.
+
+Determine how performance differs with the plugin-in enabled vs. disabled. Optimize SQL or other related things to try to bring the two modes into parity.
