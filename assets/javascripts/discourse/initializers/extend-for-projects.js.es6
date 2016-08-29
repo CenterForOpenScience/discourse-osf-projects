@@ -172,10 +172,11 @@ export default {
         });
 
         // Filter some messages by the project_guid to avoid irrelevant notifications
+        // Only serve latest and new_topic notifications for the correct projects
         TopicTrackingState.reopen({
             notify(data) {
                 if ((data.message_type != 'latest' && data.message_type != 'new_topic') ||
-                     data.payload.project_guid == this.project_guid) {
+                     (data.payload.project_guid && data.payload.project_guid == this.project_guid)) {
                     this._super();
                 }
             },

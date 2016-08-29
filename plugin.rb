@@ -238,7 +238,7 @@ after_initialize do
 
     # Register these to appear on the TopicList page/the SuggestedTopics for _each item_ on the topic list
     add_to_serializer(:listable_topic, :project_guid) {
-        Rails.logger.warn("ListableTopicSerializer.project_guid called. Value: " + object.project_guid + " Trace: " + caller)
+        Rails.logger.warn("ListableTopicSerializer.project_guid called. Value: #{object.project_guid} Trace: #{caller}")
         object.project_guid
     }
     add_to_serializer(:listable_topic, :topic_guid) { object.topic_guid }
@@ -463,7 +463,7 @@ after_initialize do
                 project_guid = OsfProjects::clean_guid(params[:project_guid])
                 project_topic = OsfProjects::topic_for_guid(project_guid)
                 raise Discourse::NotFound unless project_topic
-                
+
                 project_is_public = project_topic.project_is_public
                 raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
 
