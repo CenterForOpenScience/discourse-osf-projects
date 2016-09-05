@@ -37,14 +37,14 @@ export default {
 
             if (projectGuid) {
                 var categoryLinks = document.querySelectorAll('.cat a, a.bullet');
-                categoryLinks.forEach(function(link) {
+                _.each(categoryLinks, link => {
                     if (!link.pathname.startsWith('/forum/')) {
                         link.pathname = '/forum/' + projectGuid + link.pathname;
                     }
                 });
 
                 var footerLinks = document.querySelectorAll('h3 a');
-                footerLinks.forEach(function(link) {
+                _.each(footerLinks, link => {
                     if (link.id == '') {
                         if (link.pathname == '/latest') {
                             link.pathname = '/forum/' + projectGuid + link.pathname;

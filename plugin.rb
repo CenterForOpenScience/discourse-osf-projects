@@ -40,18 +40,23 @@ after_initialize do
 
         # guids is passed for ORDER of the array
         # if that guid does not have a topic, it does not appear in output
-        def self.names_for_topics(guids, topics)
+        # returned are the arrays of the names and guids actually present in the topics
+        def self.names_guids_for_topics(guids, topics)
             return nil unless guids
             names = guids.map do |guid|
                 topic = topics.select { |t| t.topic_guid == guid }[0]
                 topic ? topic.title : nil
             end
-            names.compact
+            compact_guids = names.each_with_index.map do |name, i|
+                guids[i] if name
+            end
+            [names.compact, compact_guids.compact]
         end
 
         def self.names_for_guids(guids)
             topics = topics_for_guids(guids)
-            names_for_topics(guids, topics)
+            names, guids = names_guids_for_topics(guids, topics)
+            names
         end
 
         def self.name_for_guid(guid)
@@ -221,8 +226,8 @@ after_initialize do
         def cache_parent_guids_names
             parent_topics = OsfProjects::topics_for_guids(object.topic.parent_guids)
             parent_topics = OsfProjects::filter_viewable_topics(parent_topics, scope.user)
-            @parent_names = OsfProjects::names_for_topics(object.topic.parent_guids, parent_topics)
-            @parent_guids = parent_topics.map { |t| t.project_guid }
+            # parent_topics will be out of order, but names_for_topics restores the order
+            @parent_names, @parent_guids = OsfProjects::names_guids_for_topics(object.topic.parent_guids, parent_topics)
         end
 
         def parent_guids
@@ -429,7 +434,7 @@ after_initialize do
                 # parent_topics will become out of order, but names_for_topics restores order
                 parent_topics = OsfProjects::topics_for_guids(parent_guids)
                 parent_topics = OsfProjects::filter_viewable_topics(parent_topics, current_user)
-                parent_names = OsfProjects::names_for_topics(parent_guids, parent_topics)
+                parent_names, parent_guids = OsfProjects::names_guids_for_topics(parent_guids, parent_topics)
 
                 list_options = {
                     per_page: PAGE_SIZE,
@@ -471,7 +476,7 @@ after_initialize do
                 # parent_topics will become out of order, but names_for_topics restores order
                 parent_topics = OsfProjects::topics_for_guids(parent_guids)
                 parent_topics = OsfProjects::filter_viewable_topics(parent_topics, current_user)
-                parent_names = OsfProjects::names_for_topics(parent_guids, parent_topics)
+                parent_names, parent_guids = OsfProjects::names_guids_for_topics(parent_guids, parent_topics)
 
                 list_options = {
                     per_page: SiteSetting.topics_per_period_in_top_page,
