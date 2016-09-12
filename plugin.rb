@@ -241,16 +241,27 @@ after_initialize do
         end
     end
 
-    # Register these to appear on the TopicList page/the SuggestedTopics for _each item_ on the topic list
-    add_to_serializer(:listable_topic, :project_guid) {
-        Rails.logger.warn("ListableTopicSerializer.project_guid called. Value: #{object.project_guid} Trace: #{caller}")
-        object.project_guid
-    }
+    # Register these to appear on the TopicList page/the SuggestedTopics for _each item_ on the topic
+    # For some reason these don't seem to be taking effect in the production instance of discourse...
+    add_to_serializer(:listable_topic, :project_guid) { object.project_guid }
     add_to_serializer(:listable_topic, :topic_guid) { object.topic_guid }
     add_to_serializer(:listable_topic, :project_name) { object.project_name }
     add_to_serializer(:listable_topic, :project_is_public) { object.project_is_public }
     add_to_serializer(:listable_topic, :excerpt) { object.topic_excerpt }
     add_to_serializer(:listable_topic, :excerpt_mentioned_users) { object.excerpt_mentioned_users }
+    # additionally and redundantly add these the above
+    add_to_serializer(:topic_list_item, :project_guid) { object.project_guid }
+    add_to_serializer(:topic_list_item, :topic_guid) { object.topic_guid }
+    add_to_serializer(:topic_list_item, :project_name) { object.project_name }
+    add_to_serializer(:topic_list_item, :project_is_public) { object.project_is_public }
+    add_to_serializer(:topic_list_item, :excerpt) { object.topic_excerpt }
+    add_to_serializer(:topic_list_item, :excerpt_mentioned_users) { object.excerpt_mentioned_users }
+    add_to_serializer(:suggested_topic, :project_guid) { object.project_guid }
+    add_to_serializer(:suggested_topic, :topic_guid) { object.topic_guid }
+    add_to_serializer(:suggested_topic, :project_name) { object.project_name }
+    add_to_serializer(:suggested_topic, :project_is_public) { object.project_is_public }
+    add_to_serializer(:suggested_topic, :excerpt) { object.topic_excerpt }
+    add_to_serializer(:suggested_topic, :excerpt_mentioned_users) { object.excerpt_mentioned_users }
 
     ListableTopicSerializer.class_eval do
         attributes :include_excerpt_mentioned_users
