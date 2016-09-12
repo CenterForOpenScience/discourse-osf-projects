@@ -14,6 +14,14 @@ import TopicView from 'discourse/views/topic';
 import TopicModel from 'discourse/models/topic';
 import MountWidget from 'discourse/components/mount-widget';
 
+// startsWith polyfill from https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/startsWith
+if (!String.prototype.startsWith) {
+    String.prototype.startsWith = function(searchString, position) {
+        position = position || 0;
+        return this.substr(position, searchString.length) === searchString;
+    };
+}
+
 export default {
     name: 'extend-for-projects',
     initialize() {
