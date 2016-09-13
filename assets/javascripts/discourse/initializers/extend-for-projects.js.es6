@@ -32,15 +32,20 @@ export default {
             var projectGuid = null;
             var navMode = '';
 
-            var topicsModel = Discourse.__container__.lookup('controller:discovery.topics').model;
-            if (topicsModel && topicsModel.topic_list.parent_guids) {
-                projectGuid = topicsModel.topic_list.parent_guids[0];
-                navMode = topicsModel.navMode;
-            }
+            var container = Discourse.__container__;
+            var route = container.lookup('controller:Application').currentPath;
 
-            var topicModel = Discourse.__container__.lookup('controller:topic').model;
-            if (topicModel && topicModel.parent_guids) {
-                projectGuid = topicModel.parent_guids[0];
+            if (route.startsWith('topic')) {
+                var topicModel = container.lookup('controller:topic').model;
+                if (topicModel && topicModel.parent_guids) {
+                    projectGuid = topicModel.parent_guids[0];
+                }
+            } else if (route.startsWith('projects.show') || route.startsWith('projects.top')) {
+                var topicsModel = container.lookup('controller:discovery.topics').model;
+                if (topicsModel && topicsModel.topic_list.parent_guids) {
+                    projectGuid = topicsModel.topic_list.parent_guids[0];
+                    navMode = topicsModel.navMode;
+                }
             }
 
             if (projectGuid) {
@@ -157,11 +162,11 @@ export default {
                 if (category) {
                     return I18n.t('topics.bottom.category', { category: category.get('name') });
                 } else {
-                    const split = (this.get('model.navMode') || this.get('model.filter') || '').split('/');
+                    const mode = (this.get('model.navMode') || this.get('model.filter') || '').split('/').pop();
                     if (this.get('model.topics.length') === 0) {
-                        return I18n.t("topics.none." + split[0], { category: split[1] });
+                        return I18n.t("topics.none." + mode);
                     } else {
-                        return I18n.t("topics.bottom." + split[0], { category: split[1] });
+                        return I18n.t("topics.bottom." + mode);
                     }
                 }
             }.property('allLoaded', 'model.topics.length'),
@@ -169,11 +174,11 @@ export default {
             footerEducation: function() {
                 if (!this.get('allLoaded') || this.get('model.topics.length') > 0 || !Discourse.User.current()) { return; }
 
-                const split = (this.get('model.navMode') || this.get('model.filter') || '').split('/');
+                const mode = (this.get('model.navMode') || this.get('model.filter') || '').split('/').pop();
 
-                if (split[0] !== 'new' && split[0] !== 'unread') { return; }
+                if (mode !== 'new' && mode !== 'unread') { return; }
 
-                return I18n.t("topics.none.educate." + split[0], {
+                return I18n.t("topics.none.educate." + mode, {
                     userPrefsUrl: Discourse.getURL("/users/") + (Discourse.User.currentProp("username_lower")) + "/preferences"
                 });
             }.property('allLoaded', 'model.topics.length')
