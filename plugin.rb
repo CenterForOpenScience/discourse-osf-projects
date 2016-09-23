@@ -15,6 +15,7 @@ after_initialize do
     PROJECT_GUID_FIELD_NAME = 'project_guid' # DB use only: equivalent to parent_guids[0]
     TOPIC_GUID_FIELD_NAME = 'topic_guid'
     PARENT_NAMES_FIELD_NAME = 'parent_names'
+    VIEW_ONLY_KEYS_FIELD_NAME = 'view_only_keys'
 
     module ::OsfProjects
         class Engine < ::Rails::Engine
@@ -81,19 +82,13 @@ after_initialize do
         def self.can_view(project_guid, view_only_id)
             result = GroupCustomField.select(1).joins(:group).where(
                 'groups.name = ? AND group_custom_fields.name = ? AND group_custom_fields.value LIKE ?',
-                project_guid, 'view_only_ids', "%-#{view_only_id}-%")
+                project_guid, VIEW_ONLY_KEYS_FIELD_NAME, "%-#{view_only_id}-%")
             result.to_a.length > 0
         end
 
-        def self.view_only_ids(project_guid)
-            result = GroupCustomField.select(:value).joins(:group).where('groups.name = ? AND group_custom_fields.name = ?', project_guid, 'view_only_ids')
+        def self.view_only_keys(project_guid)
+            result = GroupCustomField.select(:value).joins(:group).where('groups.name = ? AND group_custom_fields.name = ?', project_guid, VIEW_ONLY_KEYS_FIELD_NAME)
             result.first.value.split('-').delete_if { |s| s.length == 0 } if result.first
-        end
-
-        def self.set_view_only_ids(project_guid, view_only_ids)
-            g = Group.find_by(name: project_guid)
-            g.custom_fields.update(:view_only_ids => view_only_ids)
-            g.save
         end
 
         def self.filter_viewable_topics(topics, user, view_only_id=nil)
@@ -134,6 +129,16 @@ after_initialize do
     # For this id to get to the topic view serializer
     Guardian.class_eval do
         attr_accessor :view_only_id
+    end
+
+    Admin::GroupsController.class_eval do
+        # Also save the
+        old_save_group = self.instance_method(:save_group)
+        define_method(:save_group) do |group|
+            old_save_group.bind(self).call(group)
+            group.custom_fields.update(VIEW_ONLY_KEYS_FIELD_NAME => "-#{params[:view_only_keys].join('-')}-")
+            group.save
+        end
     end
 
     # Register these custom fields so that they will allowed as parameters
