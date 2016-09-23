@@ -2,10 +2,18 @@
 import Composer from 'discourse/models/composer';
 import showModal from 'discourse/lib/show-modal';
 import { filterQueryParams, findTopicList } from 'discourse/routes/build-topic-route';
-import { queryParams } from 'discourse/controllers/discovery-sortable';
 
 const ProjectsShowRoute = Discourse.Route.extend({
-    queryParams,
+    queryParams: {
+        order: { replace: true, refreshModel: true },
+        ascending: { replace: true, refreshModel: true },
+        status: { replace: true, refreshModel: true },
+        state: { replace: true, refreshModel: true },
+        search: { replace: true, refreshModel: true },
+        max_posts: { replace: true, refreshModel: true },
+        q: { replace: true, refreshModel: true },
+        view_only: { replace: true, refreshModel: true }
+    },
     controllerName: 'projects.show',
     navMode: 'latest',
     filterMode: 'latest',
@@ -47,12 +55,18 @@ const ProjectsShowRoute = Discourse.Route.extend({
             this.set('parentCategorySlug', params.parent_category);
         }
 
+        var qParams = filterQueryParams(params);
+        if (params.view_only) {
+            // Adding this here is what actually makes the XHR request include the view_only id
+            qParams['view_only'] = params.view_only;
+        }
+
         var model = {
-            guid: project_guid,
+            project_guid: project_guid,
             navMode: this.get('navMode'),
             filter: this.get('filterMode'),
             category: this.get('category'),
-            queryParams: filterQueryParams(params),
+            queryParams: qParams,
         };
 
         return model;
@@ -65,7 +79,7 @@ const ProjectsShowRoute = Discourse.Route.extend({
         topicController.setProperties(model.queryParams);
 
         // Track only this project_guid
-        this.topicTrackingState.set('project_guid', model.guid);
+        this.topicTrackingState.set('project_guid', model.project_guid);
 
         var self = this;
         // by returning the promise, Ember pauses until it completes. (Ember does not use the value)
@@ -125,7 +139,7 @@ const ProjectsShowRoute = Discourse.Route.extend({
                 draftSequence: controller.get('list.draft_sequence')
             }).then(function() {
                 // Pre-fill the project specific attributes
-                if (controller.get('model.guid')) {
+                if (controller.get('model.project_guid')) {
                     var c = self.controllerFor('composer').get('model');
                     c.set('parent_guids', controller.get('list.topic_list.parent_guids'));
                     c.set('parent_names', controller.get('list.topic_list.parent_names'));

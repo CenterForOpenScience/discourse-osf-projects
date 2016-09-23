@@ -16,11 +16,14 @@ try {
 
 if (extraNavItemProperties) {
     extraNavItemProperties(function(text, opts) {
+        var extraProps = {};
         if (opts && opts.projectGuid) {
-            return { projectGuid: opts.projectGuid };
-        } else {
-            return {};
+            extraProps.projectGuid = opts.projectGuid;
         }
+        if (opts && opts.viewOnly) {
+            extraProps.viewOnly = opts.viewOnly;
+        }
+        return extraProps;
     });
 }
 
@@ -30,6 +33,7 @@ if (customNavItemHref) {
             var name = navItem.get('name');
             var path = '/forum/' + navItem.get('projectGuid') + '/';
             var category = navItem.get('category');
+            var queryString = '';
 
             if (category) {
                 path += 'c/';
@@ -39,7 +43,12 @@ if (customNavItemHref) {
                 }
                 path += '/l/';
             }
-            return path + name.replace(' ', '-');
+
+            if (navItem.get('viewOnly')) {
+                queryString = '?view_only=' + navItem.get('viewOnly');
+            }
+
+            return path + name.replace(' ', '-') + queryString;
         } else {
             return null;
         }
@@ -48,13 +57,16 @@ if (customNavItemHref) {
 
 export default DiscoverySortableController.extend({
     needs: ['application'],
+    queryParams: ['view_only'],
+    view_only: null,
 
     list: null,
     canCreateTopic: false,
 
     navItems: function() {
         var navList = NavItem.buildList(this.get('model.category'), {
-            projectGuid: this.get('model.guid'),
+            projectGuid: this.get('model.project_guid'),
+            viewOnly: this.get('view_only'),
             filterMode: this.get('model.filter')
         });
         // Don't ever show the categories nav item.

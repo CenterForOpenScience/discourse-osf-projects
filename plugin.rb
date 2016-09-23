@@ -66,18 +66,38 @@ after_initialize do
         def self.can_create_project_topic(project_guid, user)
             return false if user == nil
             return true if user.staff?
-            sql = <<-SQL
-                SELECT 1
-                FROM groups
-                INNER JOIN group_users AS gu ON groups.id = gu.group_id
-                WHERE groups.name = :project_guid AND gu.user_id = :user_id
-            SQL
-            result = User.exec_sql(sql, project_guid: project_guid, user_id: user.id).to_a
-            result.length > 0
+            #sql = <<-SQL
+            #    SELECT 1
+            #    FROM groups
+            #    INNER JOIN group_users AS gu ON groups.id = gu.group_id
+            #    WHERE groups.name = :project_guid AND gu.user_id = :user_id
+            #SQL
+            #result = User.exec_sql(sql, project_guid: project_guid, user_id: user.id).to_a
+            #result.length > 0
+            result = Group.select(1).joins(:group_users).where('groups.name = ? AND group_users.user_id = ?', project_guid, user.id)
+            result.to_a.length > 0
         end
 
-        def self.filter_viewable_topics(topics, user)
-            topics.select { |t| t.project_is_public || can_create_project_topic(t.project_guid, user) }
+        def self.can_view(project_guid, view_only_id)
+            result = GroupCustomField.select(1).joins(:group).where(
+                'groups.name = ? AND group_custom_fields.name = ? AND group_custom_fields.value LIKE ?',
+                project_guid, 'view_only_ids', "%-#{view_only_id}-%")
+            result.to_a.length > 0
+        end
+
+        def self.view_only_ids(project_guid)
+            result = GroupCustomField.select(:value).joins(:group).where('groups.name = ? AND group_custom_fields.name = ?', project_guid, 'view_only_ids')
+            result.first.value.split('-').delete_if { |s| s.length == 0 } if result.first
+        end
+
+        def self.set_view_only_ids(project_guid, view_only_ids)
+            g = Group.find_by(name: project_guid)
+            g.custom_fields.update(:view_only_ids => view_only_ids)
+            g.save
+        end
+
+        def self.filter_viewable_topics(topics, user, view_only_id=nil)
+            topics.select { |t| t.project_is_public || can_create_project_topic(t.project_guid, user) || can_view(t.project_guid, view_only_id)}
         end
 
         def self.allowed_project_topics(topics, user)
@@ -109,6 +129,11 @@ after_initialize do
                 }
             end
         end
+    end
+
+    # For this id to get to the topic view serializer
+    Guardian.class_eval do
+        attr_accessor :view_only_id
     end
 
     # Register these custom fields so that they will allowed as parameters
@@ -225,7 +250,7 @@ after_initialize do
 
         def cache_parent_guids_names
             parent_topics = OsfProjects::topics_for_guids(object.topic.parent_guids)
-            parent_topics = OsfProjects::filter_viewable_topics(parent_topics, scope.user)
+            parent_topics = OsfProjects::filter_viewable_topics(parent_topics, scope.user, scope.view_only_id)
             # parent_topics will be out of order, but names_for_topics restores the order
             @parent_names, @parent_guids = OsfProjects::names_guids_for_topics(object.topic.parent_guids, parent_topics)
         end
@@ -323,20 +348,16 @@ after_initialize do
             default_project_results(project_guid).where('tu.bookmarked')
         end
 
-        def default_project_results(project_guid)
-            OsfProjects::filter_to_project(project_guid, default_results)
-        end
-
         def list_project_top_for(project_guid, period)
-          score = "#{period}_score"
-          create_list(:top, unordered: true, topics: default_project_results(project_guid)) do |topics|
-            topics = topics.joins(:top_topic).where("top_topics.#{score} > 0")
-            if period == :yearly && @user.try(:trust_level) == TrustLevel[0]
-              topics.order(TopicQuerySQL.order_top_with_pinned_category_for(score))
-            else
-              topics.order(TopicQuerySQL.order_top_for(score))
+            score = "#{period}_score"
+            create_list(:top, unordered: true, topics: default_project_results(project_guid)) do |topics|
+                topics = topics.joins(:top_topic).where("top_topics.#{score} > 0")
+                if period == :yearly && @user.try(:trust_level) == TrustLevel[0]
+                    topics.order(TopicQuerySQL.order_top_with_pinned_category_for(score))
+                else
+                    topics.order(TopicQuerySQL.order_top_for(score))
+                end
             end
-          end
         end
 
         # Override the default results for permissions control
@@ -345,8 +366,16 @@ after_initialize do
             result = old_default_results.bind(self).call(options)
             OsfProjects::allowed_project_topics(result, @user)
         end
+
+        # We use the plain default results to avoid a the complex work of determining
+        # all allowed topics when actually we are just interested in one project
+        define_method(:default_project_results) do |project_guid|
+            plain_default_results = old_default_results.bind(self).call
+            OsfProjects::filter_to_project(project_guid, plain_default_results)
+        end
     end
 
+    # Override show to implement project permission control
     TopicsController.class_eval do
         old_show = self.instance_method(:show)
         define_method(:show) do
@@ -363,8 +392,14 @@ after_initialize do
                 raise Discourse::NotFound unless project_topic
 
                 project_is_public = project_topic.project_is_public
-                raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
+                raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_guid, params[:view_only])
+                raise Discourse::NotFound unless params[:view_only] || project_is_public ||
+                        OsfProjects::can_create_project_topic(project_guid, current_user)
             end
+
+            # The serializer needs this in order to determine if the user can see parent projects.
+            # About the only place we can put it to get to the serializer is in the guardian.
+            guardian.view_only_id = params[:view_only]
 
             old_show.bind(self).call
         end
@@ -385,24 +420,24 @@ after_initialize do
             get '/:project_guid/c/:category' => 'projects#show'
             get '/:project_guid/c/:parent_category/:category' => 'projects#show'
             Discourse.filters.each do |filter|
-              get "/:project_guid/#{filter}" => "projects#show_#{filter}"
-              get "/:project_guid/c/:category/l/#{filter}" => "projects#show_#{filter}"
-              get "/:project_guid/c/:parent_category/:category/l/#{filter}" => "projects#show_#{filter}"
+                get "/:project_guid/#{filter}" => "projects#show_#{filter}"
+                get "/:project_guid/c/:category/l/#{filter}" => "projects#show_#{filter}"
+                get "/:project_guid/c/:parent_category/:category/l/#{filter}" => "projects#show_#{filter}"
             end
 
             get "/:project_guid/top" => "projects#top"
             get "/:project_guid/c/:category/l/top" => "projects#top"
             get "/:project_guid/c/:parent_category/:category/l/top" => "projects#top"
             TopTopic.periods.each do |period|
-              get "/:project_guid/top/#{period}" => "projects#top_#{period}"
-              get "/:project_guid/c/:category/l/top/#{period}" => "projects#top_#{period}"
-              get "/:project_guid/c/:parent_category/:category/l/top/#{period}" => "projects#top_#{period}"
+                get "/:project_guid/top/#{period}" => "projects#top_#{period}"
+                get "/:project_guid/c/:category/l/top/#{period}" => "projects#top_#{period}"
+                get "/:project_guid/c/:parent_category/:category/l/top/#{period}" => "projects#top_#{period}"
             end
         end
     end
 
     Discourse::Application.routes.append do
-      mount OsfProjects::Engine, at: '/forum' #/projects
+        mount OsfProjects::Engine, at: '/forum' #/projects
     end
 
     class ::OsfProjects::ProjectsController < ::ApplicationController
@@ -426,12 +461,16 @@ after_initialize do
                 raise Discourse::NotFound unless project_topic
 
                 project_is_public = project_topic.project_is_public
-                raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
+                # Raise an error if the view only id is invalid -- that makes this easier to debug.
+                raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_guid, params[:view_only])
+                raise Discourse::NotFound unless params[:view_only] || project_is_public ||
+                        OsfProjects::can_create_project_topic(project_guid, current_user)
+
 
                 parent_guids = project_topic.parent_guids
                 # parent_topics will become out of order, but names_for_topics restores order
                 parent_topics = OsfProjects::topics_for_guids(parent_guids)
-                parent_topics = OsfProjects::filter_viewable_topics(parent_topics, current_user)
+                parent_topics = OsfProjects::filter_viewable_topics(parent_topics, current_user, params[:view_only])
                 parent_names, parent_guids = OsfProjects::names_guids_for_topics(parent_guids, parent_topics)
 
                 list_options = {
@@ -458,7 +497,7 @@ after_initialize do
         end
 
         def show
-          show_latest
+            show_latest
         end
 
         TopTopic.periods.each do |period|
@@ -468,12 +507,14 @@ after_initialize do
                 raise Discourse::NotFound unless project_topic
 
                 project_is_public = project_topic.project_is_public
-                raise Discourse::NotFound unless project_is_public || OsfProjects::can_create_project_topic(project_guid, current_user)
+                raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_guid, params[:view_only])
+                raise Discourse::NotFound unless params[:view_only] || project_is_public ||
+                        OsfProjects::can_create_project_topic(project_guid, current_user)
 
                 parent_guids = project_topic.parent_guids
                 # parent_topics will become out of order, but names_for_topics restores order
                 parent_topics = OsfProjects::topics_for_guids(parent_guids)
-                parent_topics = OsfProjects::filter_viewable_topics(parent_topics, current_user)
+                parent_topics = OsfProjects::filter_viewable_topics(parent_topics, current_user, params[:view_only])
                 parent_names, parent_guids = OsfProjects::names_guids_for_topics(parent_guids, parent_topics)
 
                 list_options = {
@@ -500,31 +541,31 @@ after_initialize do
         end
 
         def top(options=nil)
-          options ||= {}
-          period = ListController.get_best_period_for(current_user.try(:previous_visit_at), options[:category])
-          send("top_#{period}", options)
+            options ||= {}
+            period = ListController.get_best_period_for(current_user.try(:previous_visit_at), options[:category])
+            send("top_#{period}", options)
         end
 
         def build_topic_list_options
-          options = {
-            page: params[:page],
-            topic_ids: param_to_integer_list(:topic_ids),
-            exclude_category_ids: params[:exclude_category_ids],
-            category: params[:category],
-            order: params[:order],
-            ascending: params[:ascending],
-            min_posts: params[:min_posts],
-            max_posts: params[:max_posts],
-            status: params[:status],
-            filter: params[:filter],
-            state: params[:state],
-            search: params[:search],
-            q: params[:q]
-          }
-          options[:no_subcategories] = true if params[:no_subcategories] == 'true'
-          options[:slow_platform] = true if slow_platform?
+            options = {
+                page: params[:page],
+                topic_ids: param_to_integer_list(:topic_ids),
+                exclude_category_ids: params[:exclude_category_ids],
+                category: params[:category],
+                order: params[:order],
+                ascending: params[:ascending],
+                min_posts: params[:min_posts],
+                max_posts: params[:max_posts],
+                status: params[:status],
+                filter: params[:filter],
+                state: params[:state],
+                search: params[:search],
+                q: params[:q]
+            }
+            options[:no_subcategories] = true if params[:no_subcategories] == 'true'
+            options[:slow_platform] = true if slow_platform?
 
-          options
+            options
         end
     end
 
@@ -551,43 +592,43 @@ after_initialize do
     # We need these messages to also send project guids.
     TopicTrackingState.class_eval do
         def self.publish_new(topic)
-          message = {
-            topic_id: topic.id,
-            message_type: 'new_topic',
-            payload: {
-              last_read_post_number: nil,
-              highest_post_number: 1,
-              created_at: topic.created_at,
-              topic_id: topic.id,
-              category_id: topic.category_id,
-              archetype: topic.archetype,
-              project_guid: topic.project_guid
+            message = {
+                topic_id: topic.id,
+                message_type: 'new_topic',
+                payload: {
+                    last_read_post_number: nil,
+                    highest_post_number: 1,
+                    created_at: topic.created_at,
+                    topic_id: topic.id,
+                    category_id: topic.category_id,
+                    archetype: topic.archetype,
+                    project_guid: topic.project_guid
+                }
             }
-          }
 
-          group_ids = topic.category && topic.category.secure_group_ids
+            group_ids = topic.category && topic.category.secure_group_ids
 
-          MessageBus.publish('/new', message.as_json, group_ids: group_ids)
-          publish_read(topic.id, 1, topic.user_id)
+            MessageBus.publish('/new', message.as_json, group_ids: group_ids)
+            publish_read(topic.id, 1, topic.user_id)
         end
 
         def self.publish_latest(topic)
-          return unless topic.archetype == 'regular'
+            return unless topic.archetype == 'regular'
 
-          message = {
-            topic_id: topic.id,
-            message_type: 'latest',
-            payload: {
-              bumped_at: topic.bumped_at,
-              topic_id: topic.id,
-              category_id: topic.category_id,
-              archetype: topic.archetype,
-              project_guid: topic.project_guid
+            message = {
+                topic_id: topic.id,
+                message_type: 'latest',
+                payload: {
+                    bumped_at: topic.bumped_at,
+                    topic_id: topic.id,
+                    category_id: topic.category_id,
+                    archetype: topic.archetype,
+                    project_guid: topic.project_guid
+                }
             }
-          }
 
-          group_ids = topic.category && topic.category.secure_group_ids
-          MessageBus.publish('/latest', message.as_json, group_ids: group_ids)
+            group_ids = topic.category && topic.category.secure_group_ids
+            MessageBus.publish('/latest', message.as_json, group_ids: group_ids)
         end
     end
 end
