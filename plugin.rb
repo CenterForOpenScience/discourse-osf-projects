@@ -39,6 +39,11 @@ after_initialize do
             topics_for_guids([guid].flatten)[0]
         end
 
+        def self.project_is_public(guid)
+            result = Group.select(:visible).where(name: guid).first
+            result ? result.visible : false
+        end
+
         # guids is passed for ORDER of the array
         # if that guid does not have a topic, it does not appear in output
         # returned are the arrays of the names and guids actually present in the topics
@@ -141,6 +146,28 @@ after_initialize do
         end
     end
 
+    EmbedController.class_eval do
+        old_comments = self.instance_method(:comments)
+        define_method(:comments) do
+            # ensure the user is allowed to see these comments
+            topic_id = params[:topic_id].to_i
+            topic = Topic.find_by(id: topic_id)
+            raise Discourse::NotFound unless topic
+
+            if topic.parent_guids
+                project_guid = topic.parent_guids[0]
+                project_is_public = OsfProjects::project_is_public(project_guid)
+                raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_guid, params[:view_only])
+                raise Discourse::NotFound unless params[:view_only] || project_is_public ||
+                        OsfProjects::can_create_project_topic(project_guid, current_user)
+            end
+
+            @queryString = params[:view_only] ? '?view_only=' + params[:view_only] : ''
+
+            old_comments.bind(self).call
+        end
+    end
+
     # Register these custom fields so that they will allowed as parameters
     # We don't pass a block so that these guids
     # to be changed in the future.
@@ -198,8 +225,7 @@ after_initialize do
         def project_is_public
             return @project_is_public if @project_is_public != nil
             return @project_is_public = true if parent_guids == nil # Not in a project, not private.
-            projectGroup = Group.select(:visible).where(name: parent_guids[0]).first
-            @project_is_public = projectGroup ? projectGroup.visible : false
+            @project_is_public = OsfProjects::project_is_public(parent_guids[0])
         end
         def topic_excerpt
             return @topic_excerpt if @topic_excerpt != nil
@@ -393,10 +419,7 @@ after_initialize do
 
             if topic.parent_guids
                 project_guid = topic.parent_guids[0]
-                project_topic = OsfProjects::topic_for_guid(project_guid)
-                raise Discourse::NotFound unless project_topic
-
-                project_is_public = project_topic.project_is_public
+                project_is_public = OsfProjects::project_is_public(project_guid)
                 raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_guid, params[:view_only])
                 raise Discourse::NotFound unless params[:view_only] || project_is_public ||
                         OsfProjects::can_create_project_topic(project_guid, current_user)

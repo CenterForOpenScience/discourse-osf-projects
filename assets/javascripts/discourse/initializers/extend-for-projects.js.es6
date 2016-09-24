@@ -156,6 +156,7 @@ export default {
                 var view_only = this.get('view_only');
                 url += has_summary || view_only ? '?' : '';
                 url += has_summary ? 'filter=summary' : '';
+                url += has_summary && view_only ? '&' : '';
                 url += view_only ? 'view_only=' + view_only : '';
                 return url;
             }.property('url')
