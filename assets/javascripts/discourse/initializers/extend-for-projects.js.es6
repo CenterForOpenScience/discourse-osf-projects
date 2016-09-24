@@ -49,13 +49,12 @@ export default {
                 viewOnly = topicController.view_only;
                 queryString = viewOnly ? '?view_only=' + viewOnly : '';
             } else if (route.startsWith('projects.show') || route.startsWith('projects.top')) {
-                var topicsController = container.lookup('controller:discovery.topics');
-                var topicsModel = topicsController.model;
+                var topicsModel = container.lookup('controller:discovery.topics').model;
                 if (topicsModel && topicsModel.topic_list.parent_guids) {
                     projectGuid = topicsModel.topic_list.parent_guids[0];
                     navMode = topicsModel.navMode;
                 }
-                viewOnly = topicsController.view_only;
+                viewOnly = container.lookup('controller:projects.show').view_only;
                 queryString = viewOnly ? '?view_only=' + viewOnly : '';
             }
 

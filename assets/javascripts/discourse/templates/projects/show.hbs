@@ -2,10 +2,10 @@
   <div class="container">
   <h1 class="osf-project-show-heading">
     {{#if list.topic_list.parent_names.[1]}}
-        {{#link-to 'projects.show' list.topic_list.parent_guids.[1]}}{{list.topic_list.parent_names.[1]}}{{/link-to}}
+        {{#link-to 'projects.show' list.topic_list.parent_guids.[1]  (query-params view_only=this.view_only)}}{{list.topic_list.parent_names.[1]}}{{/link-to}}
         <i class="fa fa-angle-right"></i>
     {{/if}}
-    {{#link-to 'projects.show' list.topic_list.parent_guids.[0]}}{{list.topic_list.parent_names.[0]}}{{/link-to}}
+    {{#link-to 'projects.show' list.topic_list.parent_guids.[0]  (query-params view_only=this.view_only)}}{{list.topic_list.parent_names.[0]}}{{/link-to}}
   </h1>
   </div>
 </div>
