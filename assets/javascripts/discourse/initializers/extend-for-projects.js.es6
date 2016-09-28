@@ -105,6 +105,16 @@ export default {
                     });
                 }
             }
+
+            if (route.startsWith('topic') && viewOnly) {
+                var postDateLinks = document.querySelectorAll('a.post-date');
+                _.each(postDateLinks, el => {
+                    var parentNode = el.parentNode;
+                    var childNode = el.children[0];
+                    parentNode.removeChild(el);
+                    parentNode.appendChild(childNode);
+                });
+            }
         }
 
         withPluginApi('0.1', api => {
