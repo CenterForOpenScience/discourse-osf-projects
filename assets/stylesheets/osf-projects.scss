@@ -7,8 +7,21 @@
 }
 
 .osf-project-show-heading {
-    margin-top: 18px;
+    margin-top: 4px;
     margin-bottom: 18px;
+}
+
+.osf-alert {
+    padding: 10px 15px;
+    margin-bottom: 10px;
+    border: 1px solid #bce8f1;
+    border-radius: 2px;
+    color: #31708f;
+    background-color: #d9edf7;
+}
+
+#topic-title {
+    padding-top: 4px;
 }
 
 button.share.private, button.invite-topic {
