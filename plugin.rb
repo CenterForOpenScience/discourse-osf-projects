@@ -27,11 +27,59 @@ after_initialize do
             guid.downcase.gsub(/[^a-z0-9]/, '')
         end
 
+        def self.preload_parent_groups(topics)
+            topics.preload_funcs ||= []
+            topics.preload_funcs <<= Proc.new do |association, records|
+                parent_guidss = association.map {|t| t.parent_guids}.flatten.uniq
+                next if parent_guidss.length == 0
+                parent_groupss = Group.where(name: parent_guidss).preload(:group_custom_fields).to_a
+
+                records.each do |t|
+                    t.parent_groups = t.parent_guids.map {|guid| parent_groupss.select {|group| group.name == guid }.first}
+                end
+            end
+            topics
+        end
+
+        def self.preload_parent_names(topics)
+            topics.preload_funcs ||= []
+            topics.preload_funcs <<= Proc.new do |association, records|
+                parent_guidss = association.map {|t| t.parent_guids}.flatten.uniq
+
+                # If the only parent topic is the current topic, no need to query DB
+                if parent_guidss.length == 1 && records.any? { |t| t.topic_guid == parent_guidss[0] }
+                    topic_name = records.select { |t| t.topic_guid == parent_guidss[0] }.first.title
+                    records.each do |t|
+                        t.parent_names = [topic_name]
+                    end
+                    next
+                end
+                next if parent_guidss.length == 0
+
+                parent_topicss = Topic.select('title, tc.value as t_guid')
+                                 .joins('LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)')
+                                 .references('tc')
+                                 .where('tc.name = ? AND tc.value IN (?)', TOPIC_GUID_FIELD_NAME, parent_guidss)
+                                 .to_a
+
+                records.each do |t|
+                    t.parent_names = t.parent_guids.map {|guid| parent_topicss.select {|topic| topic.t_guid == guid }.first.title}
+                end
+            end
+            topics
+        end
+
         def self.topics_for_guids(guids)
             topics = Topic.unscoped
                             .joins('LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)')
                             .references('tc')
                             .where('tc.name = ? AND tc.value IN (?)', TOPIC_GUID_FIELD_NAME, guids)
+
+            topics = topics.preload(:topic_custom_fields)
+            topics = topics.preload(:excerpt_post)
+            topics = OsfProjects::preload_parent_groups(topics)
+            topics = OsfProjects::preload_parent_names(topics)
+
             topics.to_a.uniq { |t| t.topic_guid }
         end
 
@@ -39,10 +87,10 @@ after_initialize do
             topics_for_guids([guid].flatten)[0]
         end
 
-        def self.project_is_public(guid)
-            result = Group.select(:visible).where(name: guid).first
-            result ? result.visible : false
-        end
+        #def self.project_is_public(guid)
+        #    result = Group.select(:visible).where(name: guid).first
+        #    result ? result.visible : false
+        #end
 
         # guids is passed for ORDER of the array
         # if that guid does not have a topic, it does not appear in output
@@ -59,45 +107,54 @@ after_initialize do
             [names.compact, compact_guids.compact]
         end
 
-        def self.names_for_guids(guids)
-            topics = topics_for_guids(guids)
-            names, guids = names_guids_for_topics(guids, topics)
-            names
-        end
+        #def self.names_for_guids(guids)
+            # If all we need are the "names"/titles, then only request these.
+            # So this is an db optimized version of using topics_for_guids and then names_guids_for_topics.
+        #    topics = Topic.select('title, tc.value as t_guid')
+        #                    .joins('LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)')
+        #                    .references('tc')
+        #                    .where('tc.name = ? AND tc.value IN (?)', TOPIC_GUID_FIELD_NAME, guids)
+        #    guidsTitles = topics.to_a.uniq { |t| t.t_guid }
 
-        def self.name_for_guid(guid)
-            names_for_guids([guid].flatten)[0]
-        end
+            # names in the same order as the guids came in
+        #    guids.map do |guid|
+        #        topic = guidsTitles.select { |t| t.t_guid == guid }[0]
+        #        topic ? topic.title : nil
+        #    end
+        #end
+
+        #def self.name_for_guid(guid)
+        #    names_for_guids([guid].flatten)[0]
+        #end
 
         def self.can_create_project_topic(project_guid, user)
             return false if user == nil
             return true if user.staff?
-            #sql = <<-SQL
-            #    SELECT 1
-            #    FROM groups
-            #    INNER JOIN group_users AS gu ON groups.id = gu.group_id
-            #    WHERE groups.name = :project_guid AND gu.user_id = :user_id
-            #SQL
-            #result = User.exec_sql(sql, project_guid: project_guid, user_id: user.id).to_a
-            #result.length > 0
             result = Group.select(1).joins(:group_users).where('groups.name = ? AND group_users.user_id = ?', project_guid, user.id)
             result.to_a.length > 0
         end
 
-        def self.can_view(project_guid, view_only_id)
-            result = GroupCustomField.select(1).joins(:group).where(
-                'groups.name = ? AND group_custom_fields.name = ? AND group_custom_fields.value LIKE ?',
-                project_guid, VIEW_ONLY_KEYS_FIELD_NAME, "%-#{view_only_id}-%")
-            result.to_a.length > 0
+        def self.can_create_topic_in_project(project_group, user)
+            return false if user == nil
+            return true if user.staff?
+            project_group.group_users.any? {|gu| gu.user_id == user.id}
         end
 
-        def self.view_only_keys(project_guid)
-            result = GroupCustomField.select(:value).joins(:group).where('groups.name = ? AND group_custom_fields.name = ?', project_guid, VIEW_ONLY_KEYS_FIELD_NAME)
-            result.first.value.split('-').delete_if { |s| s.length == 0 } if result.first
+        def self.can_view(topic, view_only_id)
+            topic.parent_groups[0].group_custom_fields.any? { |gcf| gcf.name == VIEW_ONLY_KEYS_FIELD_NAME && gcf.value.include?("-#{view_only_id}-") }
+            #result = GroupCustomField.select(1).joins(:group).where(
+            #    'groups.name = ? AND group_custom_fields.name = ? AND group_custom_fields.value LIKE ?',
+            #    project_guid, VIEW_ONLY_KEYS_FIELD_NAME, "%-#{view_only_id}-%")
+            #result.to_a.length > 0
         end
+
+        #def self.view_only_keys(project_guid)
+        #    result = GroupCustomField.select(:value).joins(:group).where('groups.name = ? AND group_custom_fields.name = ?', project_guid, VIEW_ONLY_KEYS_FIELD_NAME)
+        #    result.first.value.split('-').delete_if { |s| s.length == 0 } if result.first
+        #end
 
         def self.filter_viewable_topics(topics, user, view_only_id=nil)
-            topics.select { |t| t.project_is_public || can_create_project_topic(t.project_guid, user) || can_view(t.project_guid, view_only_id)}
+            topics.select { |t| t.project_is_public || can_create_topic_in_project(t.parent_groups[0], user) || can_view(t, view_only_id)}
         end
 
         def self.allowed_project_topics(topics, user)
@@ -131,6 +188,21 @@ after_initialize do
         end
     end
 
+    ActiveRecord::Relation.class_eval do
+        attr_accessor :preload_funcs
+
+        old_exec_queries = self.instance_method(:exec_queries)
+        define_method(:exec_queries) do |&block|
+            records = old_exec_queries.bind(self).call(&block)
+            if preload_funcs
+                preload_funcs.each do |func|
+                    func.call(self, records)
+                end
+            end
+            records
+        end
+    end
+
     # For this id to get to the topic view serializer
     Guardian.class_eval do
         attr_accessor :view_only_id
@@ -156,10 +228,9 @@ after_initialize do
 
             if topic.parent_guids
                 project_guid = topic.parent_guids[0]
-                project_is_public = OsfProjects::project_is_public(project_guid)
-                raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_guid, params[:view_only])
-                raise Discourse::NotFound unless params[:view_only] || project_is_public ||
-                        OsfProjects::can_create_project_topic(project_guid, current_user)
+                raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(topic, params[:view_only])
+                raise Discourse::NotFound unless params[:view_only] || topic.project_is_public ||
+                        OsfProjects::can_create_topic_in_project(topic.parent_groups[0], current_user)
             end
 
             @queryString = params[:view_only] ? '?view_only=' + params[:view_only] : ''
@@ -201,43 +272,66 @@ after_initialize do
         topic.save
     end
 
+    Group.class_eval do
+        has_many :group_custom_fields
+    end
+
     # Add methods for directly extracting these fields
     # and making them accessible to the TopicViewSerializer
     Topic.class_eval do
-        def project_guid
-            custom_fields[PROJECT_GUID_FIELD_NAME]
+        has_many :topic_custom_fields
+        has_one :excerpt_post, -> {where(post_number: 2)}, class_name: 'Post'
+        attr_writer :parent_groups
+        attr_writer :parent_names
+
+        def parent_groups
+            # hopefully already preloaded
+            return @parent_groups if @parent_groups
+            @parent_groups = Group.where(name: parent_guids).preload(:group_custom_fields).to_a
+        end
+
+        def parent_names
+            # hopefully already preloaded
+            return @parent_names if @parent_names
+
+            parent_topics = Topic.select('title, tc.value as t_guid')
+                            .joins('LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)')
+                            .references('tc')
+                            .where('tc.name = ? AND tc.value IN (?)', TOPIC_GUID_FIELD_NAME, parent_guids)
+                            .to_a
+            @parent_names = parent_topics.map { |topic| topic.title }
+        end
+
+        def topic_excerpt
+            excerpt_post.excerpt(200) if excerpt_post
         end
         def parent_guids
-            return nil unless custom_fields[PARENT_GUIDS_FIELD_NAME]
-            custom_fields[PARENT_GUIDS_FIELD_NAME].split('-').delete_if { |s| s.length == 0 }
+            parent_guids_str = topic_custom_fields.select { |a| a.name == PARENT_GUIDS_FIELD_NAME }.first
+            return [] unless parent_guids_str
+            parent_guids_str.value.split('-').delete_if { |s| s.length == 0 }
+        end
+        def project_guid
+            custom_field = topic_custom_fields.select { |a| a.name == PROJECT_GUID_FIELD_NAME }.first
+            custom_field.value if custom_field
         end
         def topic_guid
-            custom_fields[TOPIC_GUID_FIELD_NAME]
-        end
-        # cache these for db performance (does it help?)
-        def parent_names
-            @parent_names ||= OsfProjects::names_for_guids(parent_guids)
+            custom_field = topic_custom_fields.select { |a| a.name == TOPIC_GUID_FIELD_NAME }.first
+            custom_field.value if custom_field
         end
         def project_name
-            @project_name = @parent_names[0] if @parent_names
-            @project_name ||= OsfProjects::name_for_guid(project_guid)
+            parent_names[0] if parent_names
         end
         def project_is_public
-            return @project_is_public if @project_is_public != nil
-            return @project_is_public = true if parent_guids == nil # Not in a project, not private.
-            @project_is_public = OsfProjects::project_is_public(parent_guids[0])
-        end
-        def topic_excerpt
-            return @topic_excerpt if @topic_excerpt != nil
-            first_comment = Post.find_by(topic_id: self.id, post_number: 2)
-            @topic_excerpt = first_comment.excerpt(200) if first_comment
+            return true if parent_groups == [] # Not in a project, not private.
+            parent_groups.first.visible
         end
         def contributors
             return @contributors if @contributors != nil
             @contributors = OsfProjects::contributors_for_project(project_guid) if project_guid
         end
         def excerpt_mentioned_users
-            return unless contributors && topic_excerpt
+            # unlikely for there to be a contributor in the excerpt, so only load contributors if there is a mention
+            return unless topic_excerpt
             topic_excerpt.scan(/@[a-z0-9]+/).map { |u|
                 contributors.select {|c| c[:username] == u[1..-1] }
             }.uniq.flatten
@@ -258,8 +352,14 @@ after_initialize do
         # Override the default results for permissions control
         old_secured = self.method(:secured)
         scope :secured, lambda { |guardian=nil|
-            result = old_secured.call
-            OsfProjects::allowed_project_topics(result, guardian ? guardian.user : nil)
+            results = old_secured.call
+
+            results = results.preload(:topic_custom_fields)
+            results = results.preload(:excerpt_post)
+            results = OsfProjects::preload_parent_groups(results)
+            results = OsfProjects::preload_parent_names(results)
+
+            OsfProjects::allowed_project_topics(results, guardian ? guardian.user : nil)
         }
     end
     add_to_serializer(:topic_view, :contributors) { object.topic.contributors }
@@ -394,15 +494,28 @@ after_initialize do
         # Override the default results for permissions control
         old_default_results = self.instance_method(:default_results)
         define_method(:default_results) do |options={}|
-            result = old_default_results.bind(self).call(options)
-            OsfProjects::allowed_project_topics(result, @user)
+            results = old_default_results.bind(self).call(options)
+            results = results.includes(:category).references(:categories)
+
+            results = results.preload(:topic_custom_fields)
+            results = results.preload(:excerpt_post)
+            results = OsfProjects::preload_parent_groups(results)
+            results = OsfProjects::preload_parent_names(results)
+
+            results = OsfProjects::allowed_project_topics(results, @user)
         end
 
         # We use the plain default results to avoid a the complex work of determining
         # all allowed topics when actually we are just interested in one project
         define_method(:default_project_results) do |project_guid|
-            plain_default_results = old_default_results.bind(self).call
-            OsfProjects::filter_to_project(project_guid, plain_default_results)
+            results = old_default_results.bind(self).call
+
+            results = results.preload(:topic_custom_fields)
+            results = results.preload(:excerpt_post)
+            results = OsfProjects::preload_parent_groups(results)
+            results = OsfProjects::preload_parent_names(results)
+
+            OsfProjects::filter_to_project(project_guid, results)
         end
     end
 
@@ -410,7 +523,9 @@ after_initialize do
     TopicsController.class_eval do
         old_show = self.instance_method(:show)
         define_method(:show) do
-            topic = Topic.with_deleted.where(id: params[:topic_id] || params[:id]).first
+            topic = Topic.with_deleted.where(id: params[:topic_id] || params[:id])
+
+            topic = topic.first
             if topic == nil
                 slug = params[:slug] || params[:id]
                 topic = Topic.find_by(slug: slug.downcase) if slug
@@ -419,10 +534,9 @@ after_initialize do
 
             if topic.parent_guids
                 project_guid = topic.parent_guids[0]
-                project_is_public = OsfProjects::project_is_public(project_guid)
-                raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_guid, params[:view_only])
-                raise Discourse::NotFound unless params[:view_only] || project_is_public ||
-                        OsfProjects::can_create_project_topic(project_guid, current_user)
+                raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(topic, params[:view_only])
+                raise Discourse::NotFound unless params[:view_only] || topic.project_is_public ||
+                        OsfProjects::can_create_topic_in_project(topic.parent_groups[0], current_user)
             end
 
             # The serializer needs this in order to determine if the user can see parent projects.
@@ -490,9 +604,9 @@ after_initialize do
 
                 project_is_public = project_topic.project_is_public
                 # Raise an error if the view only id is invalid -- that makes this easier to debug.
-                raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_guid, params[:view_only])
+                raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_topic, params[:view_only])
                 raise Discourse::NotFound unless params[:view_only] || project_is_public ||
-                        OsfProjects::can_create_project_topic(project_guid, current_user)
+                        OsfProjects::can_create_topic_in_project(project_topic.parent_groups[0], current_user)
 
 
                 parent_guids = project_topic.parent_guids
@@ -535,9 +649,9 @@ after_initialize do
                 raise Discourse::NotFound unless project_topic
 
                 project_is_public = project_topic.project_is_public
-                raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_guid, params[:view_only])
+                raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_topic, params[:view_only])
                 raise Discourse::NotFound unless params[:view_only] || project_is_public ||
-                        OsfProjects::can_create_project_topic(project_guid, current_user)
+                        OsfProjects::can_create_topic_in_project(project_topic.parent_groups[0], current_user)
 
                 parent_guids = project_topic.parent_guids
                 # parent_topics will become out of order, but names_for_topics restores order

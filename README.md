@@ -91,8 +91,4 @@ The show-project.hbs file inserted into the topic-title plugin outlet displays t
 Finally, there is a osf-projects.scss file with a minimum number of styles to support the project/forum page.
 
 ##Further Work/Bugs to Fix
-Make view-only links to the forum for private projects.
-
-Determine how performance differs with the plugin-in enabled vs. disabled. Optimize SQL or other related things to try to bring the two modes into parity. Enabled, the main page load times are: 0.7, 0.9, 1.2, 2.0 seconds about.
-
-Remove sharing links for private projects next to posts (they are links whose text is how long ago the post was made)
+Make sure that performance preloading hasn't broken anything when users are logged in
