@@ -213,8 +213,10 @@ after_initialize do
         old_save_group = self.instance_method(:save_group)
         define_method(:save_group) do |group|
             old_save_group.bind(self).call(group)
-            group.custom_fields.update(VIEW_ONLY_KEYS_FIELD_NAME => "-#{params[:view_only_keys].join('-')}-")
-            group.save
+            if params[:view_only_keys]
+                group.custom_fields.update(VIEW_ONLY_KEYS_FIELD_NAME => "-#{params[:view_only_keys].join('-')}-")
+                group.save
+            end
         end
     end
 
