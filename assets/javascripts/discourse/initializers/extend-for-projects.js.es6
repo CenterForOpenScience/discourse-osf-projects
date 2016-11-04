@@ -260,11 +260,39 @@ export default {
         // Filter some messages by the project_guid to avoid irrelevant notifications
         // Only serve latest and new_topic notifications for the correct projects
         TopicTrackingState.reopen({
-            notify(data) {
+            /*notify(data) {
                 if ((data.message_type != 'latest' && data.message_type != 'new_topic') ||
                      (data.payload.project_guid && data.payload.project_guid == this.project_guid)) {
                     this._super();
                 }
+            },*/
+            countNew(category_id) {
+              return _.chain(this.states)
+                      .where(isNew)
+                      .where(topic =>
+                              topic.project_guid == this.project_guid &&
+                              topic.archetype !== "private_message" &&
+                              !topic.deleted && (
+                              topic.category_id === category_id ||
+                              topic.parent_category_id === category_id ||
+                              !category_id)
+                            )
+                      .value()
+                      .length;
+            },
+            countUnread(category_id) {
+              return _.chain(this.states)
+                      .where(isUnread)
+                      .where(topic =>
+                            topic.project_guid == this.project_guid &&
+                            topic.archetype !== "private_message" &&
+                            !topic.deleted && (
+                            topic.category_id === category_id ||
+                            topic.parent_category_id === category_id ||
+                            !category_id)
+                          )
+                      .value()
+                      .length;
             },
         });
 

@@ -63,7 +63,10 @@ after_initialize do
                                  .to_a
 
                 records.each do |t|
-                    t.parent_names = t.parent_guids.map {|guid| parent_topicss.select {|topic| topic.t_guid == guid }.first.title}
+                    t.parent_names = t.parent_guids.map do |guid|
+                        parent_topic = parent_topicss.select {|topic| topic.t_guid == guid }.first
+                        parent_topic.title if parent_topic
+                    end
                 end
             end
             topics
@@ -208,18 +211,6 @@ after_initialize do
         attr_accessor :view_only_id
     end
 
-    Admin::GroupsController.class_eval do
-        # Also save the
-        old_save_group = self.instance_method(:save_group)
-        define_method(:save_group) do |group|
-            old_save_group.bind(self).call(group)
-            if params[:view_only_keys]
-                group.custom_fields.update(VIEW_ONLY_KEYS_FIELD_NAME => "-#{params[:view_only_keys].join('-')}-")
-                group.save
-            end
-        end
-    end
-
     EmbedController.class_eval do
         old_comments = self.instance_method(:comments)
         define_method(:comments) do
@@ -250,10 +241,6 @@ after_initialize do
         tc.topic.custom_fields.update(PROJECT_GUID_FIELD_NAME => parent_guids[0])
     end
     PostRevisor.track_topic_field(:topic_guid)
-
-    on(:before_create_topic) do |topic, topic_creator|
-        topic_creator.prepare_project_topic(topic)
-    end
 
     # Hook onto topic creation to save our custom fields
     on(:topic_created) do |topic, params, user|
@@ -289,7 +276,9 @@ after_initialize do
         def parent_groups
             # hopefully already preloaded
             return @parent_groups if @parent_groups
-            @parent_groups = Group.where(name: parent_guids).preload(:group_custom_fields).to_a
+
+            unordererd_groups = Group.where(name: parent_guids).preload(:group_custom_fields).to_a
+            @parent_groups = parent_guids.map {|guid| unordererd_groups.select {|group| group.name == guid }.first}
         end
 
         def parent_names
@@ -301,7 +290,11 @@ after_initialize do
                             .references('tc')
                             .where('tc.name = ? AND tc.value IN (?)', TOPIC_GUID_FIELD_NAME, parent_guids)
                             .to_a
-            @parent_names = parent_topics.map { |topic| topic.title }
+
+            @parent_names = parent_guids.map do |guid|
+                parent_topic = parent_topics.select {|topic| topic.t_guid == guid }.first
+                parent_topic.title if parent_topic
+            end
         end
 
         def topic_excerpt
@@ -341,7 +334,7 @@ after_initialize do
         # override
         def slug
             slug = topic_guid || 'topic'
-            unless read_attribute(:slug)
+            unless slug == read_attribute(:slug)
               if new_record?
                 write_attribute(:slug, slug)
               else
@@ -367,37 +360,24 @@ after_initialize do
     add_to_serializer(:topic_view, :contributors) { object.topic.contributors }
 
     TopicCreator.class_eval do
-        def prepare_project_topic(topic)
-            return unless @opts[:archetype] == Archetype.default
-            # Associate it with the project group
-            add_groups(topic, [@opts[:parent_guids][0]]) if @opts[:parent_guids]
+        # Override topic creation to avoid creating multiple topics with the same topic_guid
+        old_create = self.instance_method(:create)
+        define_method(:create) do
+            topic = OsfProjects::topic_for_guid(@opts[:topic_guid]) if @opts[:topic_guid]
+            if topic
+                topic.recover! if topic.deleted_at.present?
+                return topic
+            end
+
+            old_create.bind(self).call
         end
     end
 
     # Register these Topic attributes to appear on the Topic page
     TopicViewSerializer.attributes_from_topic(:topic_guid)
     TopicViewSerializer.attributes_from_topic(:project_is_public)
-    TopicViewSerializer.class_eval do
-        attributes :parent_guids
-        attributes :parent_names
-
-        def cache_parent_guids_names
-            parent_topics = OsfProjects::topics_for_guids(object.topic.parent_guids)
-            parent_topics = OsfProjects::filter_viewable_topics(parent_topics, scope.user, scope.view_only_id)
-            # parent_topics will be out of order, but names_for_topics restores the order
-            @parent_names, @parent_guids = OsfProjects::names_guids_for_topics(object.topic.parent_guids, parent_topics)
-        end
-
-        def parent_guids
-            cache_parent_guids_names unless @parent_guids
-            @parent_guids
-        end
-
-        def parent_names
-            cache_parent_guids_names unless @parent_names
-            @parent_names
-        end
-    end
+    TopicViewSerializer.attributes_from_topic(:parent_guids)
+    TopicViewSerializer.attributes_from_topic(:parent_names)
 
     # Register these to appear on the TopicList page/the SuggestedTopics for _each item_ on the topic
     # For some reason it doesn't work to add these to the parent serializer listable_topic
@@ -525,7 +505,7 @@ after_initialize do
     TopicsController.class_eval do
         old_show = self.instance_method(:show)
         define_method(:show) do
-            topic = Topic.with_deleted.where(id: params[:topic_id] || params[:id])
+            topic = Topic.where(id: params[:topic_id] || params[:id])
 
             topic = topic.first
             if topic == nil
@@ -563,6 +543,8 @@ after_initialize do
             get '/:project_guid' => 'projects#show'
             get '/:project_guid/c/:category' => 'projects#show'
             get '/:project_guid/c/:parent_category/:category' => 'projects#show'
+            delete '/:project_guid' => 'projects#delete'
+            put '/:project_guid' => 'projects#update'
             Discourse.filters.each do |filter|
                 get "/:project_guid/#{filter}" => "projects#show_#{filter}"
                 get "/:project_guid/c/:category/l/#{filter}" => "projects#show_#{filter}"
@@ -597,12 +579,54 @@ after_initialize do
             render json: {}
         end
 
+        def delete
+            project_guid = OsfProjects::clean_guid(params[:project_guid])
+            project_topic = OsfProjects::topic_for_guid(project_guid)
+            raise Discourse::NotFound unless project_topic && project_topic.deleted_at.nil?
+            raise Discourse::NotFound unless OsfProjects::can_create_topic_in_project(project_topic.parent_groups[0], current_user)
+
+            # 'Trashing' every single project in the topic allows them to be later recovered,
+            # but will make the project appear completely gone
+            project_topics = OsfProjects::filter_to_project(project_guid, Topic)
+            project_topics.all.each { |t| t.trash! }
+
+            render nothing: true
+        end
+
+        def update
+            project_guid = OsfProjects::clean_guid(params[:project_guid])
+            project_topic = OsfProjects::topic_for_guid(project_guid)
+            project_group = project_topic.parent_groups[0] if project_topic
+
+            raise Discourse::NotFound unless project_group == nil || OsfProjects::can_create_topic_in_project(project_group, current_user)
+
+            unless project_group
+                project_group = Group.new
+                project_group.name = project_guid
+            end
+
+            project_group.visible = (params[:is_public] == 'true') if params[:is_public].present?
+            if params[:view_only_keys]
+                project_group.custom_fields.update(VIEW_ONLY_KEYS_FIELD_NAME => "-#{params[:view_only_keys].join('-')}-")
+            end
+            project_group.usernames = params[:contributors] if params[:contributors]
+            project_group.save
+
+            # Calling this update endpoint effectively recovers a deleted/trashed project
+            if project_topic && project_topic.deleted_at.present?
+                project_topics = OsfProjects::filter_to_project(project_guid, Topic.with_deleted)
+                project_topics.all.each { |t| t.recover! if t.deleted_by_id.nil? }
+            end
+
+            render nothing: true
+        end
+
         # [:latest, :unread, :new, :read, :posted, :bookmarks]
         Discourse.filters.each do |filter|
             define_method("show_#{filter}") do
                 project_guid = OsfProjects::clean_guid(params[:project_guid])
                 project_topic = OsfProjects::topic_for_guid(project_guid)
-                raise Discourse::NotFound unless project_topic
+                raise Discourse::NotFound unless project_topic && project_topic.deleted_at.nil?
 
                 project_is_public = project_topic.project_is_public
                 # Raise an error if the view only id is invalid -- that makes this easier to debug.
@@ -648,7 +672,7 @@ after_initialize do
             define_method("top_#{period}") do |options = nil|
                 project_guid = OsfProjects::clean_guid(params[:project_guid])
                 project_topic = OsfProjects::topic_for_guid(project_guid)
-                raise Discourse::NotFound unless project_topic
+                raise Discourse::NotFound unless project_topic && project_topic.deleted_at.nil?
 
                 project_is_public = project_topic.project_is_public
                 raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_topic, params[:view_only])
