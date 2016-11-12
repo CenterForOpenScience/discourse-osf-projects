@@ -243,7 +243,10 @@ after_initialize do
     PostRevisor.track_topic_field(:topic_guid)
 
     # Hook onto topic creation to save our custom fields
-    on(:topic_created) do |topic, params, user|
+    on(:before_create_topic) do |topic, topic_creator|
+        user = topic_creator.user
+        params = topic_creator.opts
+
         next unless params[:parent_guids]
         parent_guids = params[:parent_guids].map { |guid| OsfProjects::clean_guid(guid) }
 
@@ -258,7 +261,6 @@ after_initialize do
 
         topic.custom_fields.update(PARENT_GUIDS_FIELD_NAME => "-#{parent_guids.join('-')}-")
         topic.custom_fields.update(PROJECT_GUID_FIELD_NAME => parent_guids[0])
-        topic.save
     end
 
     Group.class_eval do
@@ -331,10 +333,11 @@ after_initialize do
                 contributors.select {|c| c[:username] == u[1..-1] }
             }.uniq.flatten
         end
+
         # override
         def slug
-            slug = topic_guid || 'topic'
-            unless slug == read_attribute(:slug)
+            slug = topic_guid ? topic_guid : Slug.for(title)
+            unless read_attribute(:slug) == slug
               if new_record?
                 write_attribute(:slug, slug)
               else
@@ -582,7 +585,7 @@ after_initialize do
         def delete
             project_guid = OsfProjects::clean_guid(params[:project_guid])
             project_topic = OsfProjects::topic_for_guid(project_guid)
-            raise Discourse::NotFound unless project_topic && project_topic.deleted_at.nil?
+            raise Discourse::NotFound unless project_topic && (project_topic.deleted_at.nil? || project_topic.deleted_by_id.present?)
             raise Discourse::NotFound unless OsfProjects::can_create_topic_in_project(project_topic.parent_groups[0], current_user)
 
             # 'Trashing' every single project in the topic allows them to be later recovered,
@@ -757,7 +760,7 @@ after_initialize do
     end
     add_to_serializer(:basic_user, :name) { user.name }
 
-    # We need these messages to also send project guids.
+    # We need these messages to also send project information to determine whether they affect the user
     TopicTrackingState.class_eval do
         def self.publish_new(topic)
             message = {
@@ -770,7 +773,8 @@ after_initialize do
                     topic_id: topic.id,
                     category_id: topic.category_id,
                     archetype: topic.archetype,
-                    project_guid: topic.project_guid
+                    project_guid: topic.project_guid,
+                    project_is_public: topic.project_is_public
                 }
             }
 
@@ -791,7 +795,8 @@ after_initialize do
                     topic_id: topic.id,
                     category_id: topic.category_id,
                     archetype: topic.archetype,
-                    project_guid: topic.project_guid
+                    project_guid: topic.project_guid,
+                    project_is_public: topic.project_is_public
                 }
             }
 

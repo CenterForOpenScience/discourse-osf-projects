@@ -1,0 +1,5 @@
+{{#if result.topic.project_guid}}
+    <div class='osf-search-parent-project'>
+        {{#link-to 'projects.show' result.topic.project_guid}}{{result.topic.project_name}}{{/link-to}}
+    </div>
+{{/if}}

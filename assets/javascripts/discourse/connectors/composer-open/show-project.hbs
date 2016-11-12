@@ -1,5 +1,5 @@
 {{#if this.model.parent_guids.[0]}}
-<span class='parent-project'>
-    {{#link-to 'projects.show' this.model.parent_guids.[0]}}{{this.model.parent_names.[0]}}{{/link-to}}
-</span>
+    <span class='osf-bold-parent-project'>
+        {{#link-to 'projects.show' this.model.parent_guids.[0]}}{{this.model.parent_names.[0]}}{{/link-to}}
+    </span>
 {{/if}}

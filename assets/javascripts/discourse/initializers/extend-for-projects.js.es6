@@ -16,6 +16,7 @@ import TopicController from 'discourse/controllers/topic';
 import TopicRouter from 'discourse/routes/topic';
 import TopicFromParamsRouter from 'discourse/routes/topic-from-params';
 import MountWidget from 'discourse/components/mount-widget';
+import { NotificationLevels } from 'discourse/lib/notification-levels';
 
 // startsWith polyfill from https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/startsWith
 if (!String.prototype.startsWith) {
@@ -117,9 +118,33 @@ export default {
             }
         }
 
+        // Use topic list information to add details to preloaded states
+        function updateTopicTracking() {
+            var container = Discourse.__container__;
+            var route = container.lookup('controller:Application').currentPath;
+
+            if (route.startsWith('projects.show') || route.startsWith('projects.top') || route.startsWith('discovery')) {
+                var topicsController = container.lookup('controller:discovery.topics');
+                var topicTrackingState = topicsController.topicTrackingState;
+                var topics = topicsController.model.topic_list.topics;
+                _.each(topics, t => {
+                    var state = topicTrackingState.states['t' + t.id];
+                    if (state) {
+                        state.project_guid = t.project_guid;
+                        state.project_is_public = t.project_is_public;
+                    }
+                });
+
+                // Change the message count so that things that call countNew and countUnread will have to refresh
+                topicTrackingState.set("messageCount", topicTrackingState.get("messageCount") + 1);
+                topicTrackingState.set("messageCount", topicTrackingState.get("messageCount") - 1);
+            }
+        }
+
         withPluginApi('0.1', api => {
             api.onPageChange((url, title) => {
                 Ember.run.scheduleOnce('afterRender', fixUrls);
+                Ember.run.scheduleOnce('actions', updateTopicTracking);
             });
         });
 
@@ -257,44 +282,47 @@ export default {
             }.property('allLoaded', 'model.topics.length')
         });
 
-        // Filter some messages by the project_guid to avoid irrelevant notifications
-        // Only serve latest and new_topic notifications for the correct projects
-        TopicTrackingState.reopen({
-            /*notify(data) {
-                if ((data.message_type != 'latest' && data.message_type != 'new_topic') ||
-                     (data.payload.project_guid && data.payload.project_guid == this.project_guid)) {
-                    this._super();
-                }
-            },*/
-            countNew(category_id) {
-              return _.chain(this.states)
-                      .where(isNew)
-                      .where(topic =>
-                              topic.project_guid == this.project_guid &&
-                              topic.archetype !== "private_message" &&
-                              !topic.deleted && (
-                              topic.category_id === category_id ||
-                              topic.parent_category_id === category_id ||
-                              !category_id)
-                            )
-                      .value()
-                      .length;
-            },
-            countUnread(category_id) {
-              return _.chain(this.states)
-                      .where(isUnread)
-                      .where(topic =>
-                            topic.project_guid == this.project_guid &&
-                            topic.archetype !== "private_message" &&
-                            !topic.deleted && (
-                            topic.category_id === category_id ||
-                            topic.parent_category_id === category_id ||
-                            !category_id)
-                          )
-                      .value()
-                      .length;
-            },
-        });
+        // Directly copied/exposed from topic-tracking-state.js.es6
+        function isNew(topic) {
+          return topic.last_read_post_number === null &&
+                ((topic.notification_level !== 0 && !topic.notification_level) ||
+                topic.notification_level >= NotificationLevels.TRACKING);
+        }
+
+        function isUnread(topic) {
+          return topic.last_read_post_number !== null &&
+                 topic.last_read_post_number < topic.highest_post_number &&
+                 topic.notification_level >= NotificationLevels.TRACKING;
+        }
+        // Modified to check project settings, so only relevant project notifications are shown
+        TopicTrackingState.prototype.countNew = function(category_id) {
+          return _.chain(this.states)
+                  .where(isNew)
+                  .where(topic =>
+                          ((!this.project_guid && topic.project_is_public) || topic.project_guid == this.project_guid) &&
+                          topic.archetype !== "private_message" &&
+                          !topic.deleted && (
+                          topic.category_id === category_id ||
+                          topic.parent_category_id === category_id ||
+                          !category_id)
+                        )
+                  .value()
+                  .length;
+        };
+        TopicTrackingState.prototype.countUnread = function(category_id) {
+          return _.chain(this.states)
+                  .where(isUnread)
+                  .where(topic =>
+                        ((!this.project_guid && topic.project_is_public) || topic.project_guid == this.project_guid) &&
+                        topic.archetype !== "private_message" &&
+                        !topic.deleted && (
+                        topic.category_id === category_id ||
+                        topic.parent_category_id === category_id ||
+                        !category_id)
+                      )
+                  .value()
+                  .length;
+        };
 
         var contributorSearch = function(term) {
             var topicModel = Discourse.__container__.lookup('controller:topic').model;
