@@ -5,7 +5,7 @@ Read general documentation about writing Discourse plugins here: https://meta.di
 
 This plugin was designed to primarily encapsulate features that would be useful to anyone seeking to host a Discourse instance with many different sub-forums, so in general we try to avoid too many things that are OSF specific.
 
-We make a group for each project named with the project’s GUID, and have the group consist of all the contributors to that project. Groups already have a visibility setting we use to indicate public/private projects.
+We make a group for each project named with the project’s GUID, and have the group consist of all the contributors to that project. Groups already have a visibility setting we use to indicate public/private projects. The group also stores view_only keys for the project.
 
 Each topic has custom fields containing project_guid, parent_guids (which has the whole chain of “projects” (that is, projects or components) up to the top-most containing project) and a topic_guid as well. The topic_guid is the GUID of the entity that this topic is discussing, that is, the file GUID (topics are only created for files when the file is assigned a GUID), wiki GUID, or project/component GUID.
 
@@ -14,20 +14,30 @@ A topic is able to look-up the name of its containing project by looking up the 
 ##Hooks to Discourse Back-end
 Modifications to the Discourse back-end occur in the plugin.rb file.
 
-We modify the TopicController's show method so that if a topic is in a project, the project must either be public or the user a contributor to it in order to see it.
-We modify TopicQuery's default_results method and Topic's secured method to filter topics in the same way.
+We modify ActiveRecord::Relation in order to allow arbitrary user preloading functions.
 
+We modify the TopicController's show method so that if a topic is in a project, the project must either be public, the user must be a contributor to it, or the user must have a valid view_only key in order to see it.
+We modify TopicQuery's default_results method and Topic's secured method to filter topics in the same way. We modify TopicQuery to make new methods for retrieving just topics in the current project, and also to preload information about the projects and topics involved.
+We modify the EmbedController for the same reason.
+
+We add a view_only_id attribute to the Guardian class so we can use it to pass that key for view_only authentication
+
+The Topic class is extended to expose project specific attributes, hopefully from preloaded fields.
 We override the Topic slug method to return the topic_guid.
 
 We use PostRevisor.track_topic_field to tell Discourse that we expect topic_guid and parent_guids to be fields that can be used when creating a topic. We also allow a topic to have the parent_guids field changed, which might have to happen if a component is moved or reorganized. I don't think the OSF currently does this, though.
 
-On the before_create_topic event, we add the topic to the group associated with its project_guid.
-On the topic_created event, we save the topic_guid and parent_guids in the topic's custom fields.
+With the before_create_topic event, we save the topic_guid and parent_guids in the topic's custom fields.
+
+In the Group class, we add the has_many :group_custom_fields relation so that it can be preloaded.
+
+We add an additional search filter that allows searches to be filtered by project guid.
 
 ##New Back-end Endpoints
 We make a new series of endpoints at /forum/:project_guid with essentially all the same functionality as the main Discourse page, but filtered by project_guid. The plugin also manages all privacy to ensure that only contributors may view and interact with private projects.
 
 The endpoints exposed include:
+/forum/:project_guid is the endpoint for creating/updating/recovering a project and deleting a project
 /forum/:project_guid/:filter for each of the different Discourse filters including latest, unread, new, read, posted, and bookmarks.
 /forum/:project_guid/top and /forum/:project_guid/top/:period for the periods yearly, quarterly, monthly, weekly, daily, and all.
 /forum/:project_guid/c/:category and /forum/:project_guid/c/:category/l/:filter works the same (including with top in place of the filter), but constrained to results in the given category.
@@ -74,20 +84,31 @@ We also modify the navigation item's 'active' method because with our modified r
 
 Similarly, we have to modify the discovery.topics controller in three functions to make it work with our /forum/:project_guid routes.
 
-We modify TopicTrackingState's notify method to not report on messages from Discourse about topics that are not in the current project. If we didn't do this, Discourse would tell us that there is a 'new' or 'unread' topic we should read when a relevant topic in another project is made or modified. We could go navigate to the 'new' topic tab, but wouldn't find any new topic there, because it is actually in a different project.
+We modify TopicTrackingState's countNew and countUnread methods to only count topics that are in the current project. Otherwise, the message bus would notify us of topics we may not have permission to see, or that are in different projects and won't show up when we click to view new topics. Also, we have a method updateTopicTracking that on page load uses information from the topic list to update information in the message bus. This is important because the preloaded message bus lacks information on project guids. This will only update a portion of the topics in the message bus, but it will prevent the topic list from showing more "new" or "unread" topics than are shown in the counts.
 
-Finally, we modify the composer editor's \@mention autocomplete functionality so that it only helps you make \@mentions for individuals who are contributors to the project.
+We override the 'search-result-topic' and 'search-term' widgets so that the search results displays the project a topic is in and so that searches are filtered to only have results for the current project.
+
+We modify the NavigationItem and DiscoveryTopicsController so that they do not get tripped up by the different navigation modes and filters which now often contain "/forum/:project_guid".
+
+We modify the composer editor's \@mention autocomplete functionality so that it only helps you make \@mentions for individuals who are contributors to the project.
+
+We modify TopicController, TopicRouter, and TopicFromParamsRouter so that view_only keys get correctly persisted and passed around to urls they are needed in.
 
 ##Discourse Connectors
 Connectors are a concept Discourse uses in order to insert handlebar (hbs) template materials into the built-in templates at specific places.
 
-The show-project.hbs file is inserted into the 'composer-open' plugin outlet. It adds a link to the composer window to show what project a topic being created or edited is in.
+In the 'composer-open' plugin outlet, we add a link to the composer window to show what project a topic being created or edited is in.
 
-The parent-project-label.raw.hbs file is added to the topic-list-tags plugin outlet. Because this plugin outlet is within the topic list, it was optimized to work with virtual-dom and not be processed by Ember. So the template is actually a little more constrained and must be marked as .raw.hbs. This connector simply adds a label/link to each topic in a topic list with the project it is in.
+In the 'full-page-search-category' outlet, we add a link to the project that a search result is in.
 
-The show-project.hbs file inserted into the topic-title plugin outlet displays the entire chain of containing and parent projects that the topic is contained in.
+In the 'topic-above-post-stream' outlet, we add an alert to view_only pages, as in the OSF.
+
+In the 'topic-list-tags' outlet, we add a link to the parent project of each topic in the topic list. Because this plugin outlet is within the topic list, it was optimized to work with virtual-dom and not be processed by Ember, so the template is actually a little more constrained and must be marked as .raw.hbs.
+
+In the 'topic-title' plugin outlet, we display the entire chain of containing and parent projects that the topic is in.
 
 ##CSS
 Finally, there is a osf-projects.scss file with a minimum number of styles to support the project/forum page.
 
 ##Further Work/Bugs to Fix
+Make sure search works on view_only projects

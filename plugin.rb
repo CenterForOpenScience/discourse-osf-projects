@@ -90,11 +90,6 @@ after_initialize do
             topics_for_guids([guid].flatten)[0]
         end
 
-        #def self.project_is_public(guid)
-        #    result = Group.select(:visible).where(name: guid).first
-        #    result ? result.visible : false
-        #end
-
         # guids is passed for ORDER of the array
         # if that guid does not have a topic, it does not appear in output
         # returned are the arrays of the names and guids actually present in the topics
@@ -109,26 +104,6 @@ after_initialize do
             end
             [names.compact, compact_guids.compact]
         end
-
-        #def self.names_for_guids(guids)
-            # If all we need are the "names"/titles, then only request these.
-            # So this is an db optimized version of using topics_for_guids and then names_guids_for_topics.
-        #    topics = Topic.select('title, tc.value as t_guid')
-        #                    .joins('LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)')
-        #                    .references('tc')
-        #                    .where('tc.name = ? AND tc.value IN (?)', TOPIC_GUID_FIELD_NAME, guids)
-        #    guidsTitles = topics.to_a.uniq { |t| t.t_guid }
-
-            # names in the same order as the guids came in
-        #    guids.map do |guid|
-        #        topic = guidsTitles.select { |t| t.t_guid == guid }[0]
-        #        topic ? topic.title : nil
-        #    end
-        #end
-
-        #def self.name_for_guid(guid)
-        #    names_for_guids([guid].flatten)[0]
-        #end
 
         def self.can_create_project_topic(project_guid, user)
             return false if user == nil
@@ -145,16 +120,7 @@ after_initialize do
 
         def self.can_view(topic, view_only_id)
             topic.parent_groups[0].group_custom_fields.any? { |gcf| gcf.name == VIEW_ONLY_KEYS_FIELD_NAME && gcf.value.include?("-#{view_only_id}-") }
-            #result = GroupCustomField.select(1).joins(:group).where(
-            #    'groups.name = ? AND group_custom_fields.name = ? AND group_custom_fields.value LIKE ?',
-            #    project_guid, VIEW_ONLY_KEYS_FIELD_NAME, "%-#{view_only_id}-%")
-            #result.to_a.length > 0
         end
-
-        #def self.view_only_keys(project_guid)
-        #    result = GroupCustomField.select(:value).joins(:group).where('groups.name = ? AND group_custom_fields.name = ?', project_guid, VIEW_ONLY_KEYS_FIELD_NAME)
-        #    result.first.value.split('-').delete_if { |s| s.length == 0 } if result.first
-        #end
 
         def self.filter_viewable_topics(topics, user, view_only_id=nil)
             topics.select { |t| t.project_is_public || can_create_topic_in_project(t.parent_groups[0], user) || can_view(t, view_only_id)}
@@ -206,7 +172,7 @@ after_initialize do
         end
     end
 
-    # For this id to get to the topic view serializer
+    # Allow us to use this object to pass the view_only id to the topic view serializer
     Guardian.class_eval do
         attr_accessor :view_only_id
     end
