@@ -2,8 +2,9 @@
     display: inline-block;
 }
 
-.search-category {
+.fps-result .fps-topic .search-category {
     padding-top: 0;
+    line-height: 1em;
 }
 
 .osf-search-parent-project {
@@ -12,6 +13,12 @@
 
 .osf-topic-list-parent-project {
     font-size: 12px;
+}
+
+.osf-search-menu-parent-project a {
+    padding: 0 !important;
+    padding-bottom: 4px !important;
+    background-color: inherit !important;
 }
 
 .osf-bold-parent-project {

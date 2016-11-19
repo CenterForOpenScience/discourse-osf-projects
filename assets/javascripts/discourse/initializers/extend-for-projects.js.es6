@@ -17,6 +17,9 @@ import TopicRouter from 'discourse/routes/topic';
 import TopicFromParamsRouter from 'discourse/routes/topic-from-params';
 import MountWidget from 'discourse/components/mount-widget';
 import { NotificationLevels } from 'discourse/lib/notification-levels';
+import { h } from 'virtual-dom';
+import RawHtml from 'discourse/widgets/raw-html';
+import { dateNode } from 'discourse/helpers/node';
 
 // startsWith polyfill from https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/startsWith
 if (!String.prototype.startsWith) {
@@ -29,35 +32,56 @@ if (!String.prototype.startsWith) {
 export default {
     name: 'extend-for-projects',
     initialize() {
-        // Setting this value is what makes new topics actually able to appear in the target project
-        Composer.serializeOnCreate('parent_guids');
-
-        function fixUrls() {
-            var projectGuid = null;
-            var navMode = '';
-            var viewOnly = '';
-            var queryString = '';
-
+        function getProjectModel() {
+            var projectModel = {};
             var container = Discourse.__container__;
             var route = container.lookup('controller:Application').currentPath;
+            projectModel.route = route;
 
             if (route.startsWith('topic')) {
                 var topicController = container.lookup('controller:topic');
                 var topicModel = topicController.model;
-                if (topicModel && topicModel.parent_guids) {
-                    projectGuid = topicModel.parent_guids[0];
+                if (topicModel.parent_names) {
+                    projectModel.parent_names = topicModel.parent_names;
+                    projectModel.parent_guids = topicModel.parent_guids;
+                    projectModel.contributors = topicModel.contributors;
+                    projectModel.project_is_public = topicModel.project_is_public;
+                    projectModel.view_only = topicController.view_only;
+                    return projectModel;
                 }
-                viewOnly = topicController.view_only;
-                queryString = viewOnly ? '?view_only=' + viewOnly : '';
             } else if (route.startsWith('projects.show') || route.startsWith('projects.top')) {
-                var topicsModel = container.lookup('controller:discovery.topics').model;
-                if (topicsModel && topicsModel.topic_list.parent_guids) {
-                    projectGuid = topicsModel.topic_list.parent_guids[0];
-                    navMode = topicsModel.navMode;
+                var projectController = container.lookup('controller:projects.show');
+                var projectList = projectController.list;
+                if (projectList && projectList.topic_list.parent_names) {
+                    var projectTopicList = projectList.topic_list;
+                    projectModel.parent_names = projectTopicList.parent_names;
+                    projectModel.parent_guids = projectTopicList.parent_guids;
+                    projectModel.contributors = projectTopicList.contributors;
+                    projectModel.project_is_public = projectTopicList.project_is_public;
+                    projectModel.view_only = projectController.view_only;
                 }
-                viewOnly = container.lookup('controller:projects.show').view_only;
-                queryString = viewOnly ? '?view_only=' + viewOnly : '';
+                var topicsModel = container.lookup('controller:discovery.topics').model;
+                if (topicsModel) {
+                    projectModel.navMode = topicsModel.navMode;
+                }
+                return projectModel;
             }
+            return null;
+        }
+
+        // Setting this value is what makes new topics (from the composer) able to appear in the target project
+        Composer.serializeOnCreate('parent_guids');
+
+        function fixUrls() {
+            var projectModel = getProjectModel();
+            if (!projectModel) {
+                return;
+            }
+            var projectGuid = projectModel.parent_guids[0];
+            var navMode = projectModel.navMode;
+            var viewOnly = projectModel.view_only;
+            var route = projectModel.route;
+            var queryString = projectModel.view_only ? '?view_only=' + projectModel.view_only : '';
 
             if (projectGuid) {
                 var categoryLinks = document.querySelectorAll('.cat a, a.bullet');
@@ -71,7 +95,7 @@ export default {
                 var footerLinks = document.querySelectorAll('h3 a');
                 _.each(footerLinks, link => {
                     // normal non-ember-created links
-                    if (link.id == '') {
+                    if (link.id === '') {
                         if (link.pathname == '/latest') {
                             link.pathname = '/forum/' + projectGuid + link.pathname;
                             link.search = queryString;
@@ -99,7 +123,7 @@ export default {
                 });
 
                 // Add the view_only id to all topics on the list
-                if (route.startsWith('projects.show') || route.startsWith('projects.top')) {
+                if (queryString && (route.startsWith('projects.show') || route.startsWith('projects.top'))) {
                     var topicTitleLinks = document.querySelectorAll('.main-link a');
                     _.each(topicTitleLinks, link => {
                         link.search = queryString;
@@ -107,6 +131,7 @@ export default {
                 }
             }
 
+            // Remove sharing links on the dates from view_only views
             if (route.startsWith('topic') && viewOnly) {
                 var postDateLinks = document.querySelectorAll('a.post-date');
                 _.each(postDateLinks, el => {
@@ -145,6 +170,98 @@ export default {
             api.onPageChange((url, title) => {
                 Ember.run.scheduleOnce('afterRender', fixUrls);
                 Ember.run.scheduleOnce('actions', updateTopicTracking);
+            });
+
+            // copied/exposed from search-menu-results
+            function postResult(result, link, term) {
+              const html = [link];
+
+              if (!this.site.mobileView) {
+                html.push(h('span.blurb', [ dateNode(result.created_at),
+                                            ' - ',
+                                            new Highlighted(result.blurb, term) ]));
+              }
+
+              return html;
+            }
+
+            // copied/exposed from search-menu-results
+            class Highlighted extends RawHtml {
+              constructor(html, term) {
+                super({ html: `<span>${html}</span>` });
+                this.term = term;
+              }
+
+              decorate($html) {
+                if (this.term) {
+                  $html.highlight(this.term.split(/\s+/), { className: 'search-highlight' });
+                }
+              }
+            }
+
+            // Override this widget to display project name
+            // copied and changed from search-menu-results
+            api.createWidget(`search-result-topic`, {
+                html(attrs) {
+                    return attrs.results.map(r => {
+                        return h('li', this.attach('link', {
+                            href: r.get('url'),
+                            contents: () => {
+                                const topic = r.topic;
+                                const link = h('span.topic', [
+                                  this.attach('topic-status', { topic, disableActions: true }),
+                                  h('span.topic-title', new Highlighted(topic.get('fancyTitle'), attrs.term)),
+                                  this.attach('category-link', { category: topic.get('category'), link: false })
+                                ]);
+
+                                let withProject = [link];
+                                if (topic.project_guid) {
+                                     withProject.push(h('div.osf-search-menu-parent-project', h('span', topic.project_name)));
+                                }
+
+                                return postResult.call(this, r, withProject, attrs.term);
+                            },
+                            className: 'search-link'
+                        }));
+                    });
+                }
+            });
+
+            // Override this widget to add a project filter to the search term
+            // copied and modified from discourse/widgets/search-menu-controls
+            api.createWidget('search-term', {
+                tagName: 'input',
+                buildId: () => 'search-term',
+
+                buildAttributes(attrs) {
+                    let val = attrs.value || '';
+                    let projectModel = getProjectModel();
+                    if (projectModel) {
+                        val = val.replace(' project:' + projectModel.parent_guids[0], '');
+                    }
+
+                    return { type: 'text',
+                             value: val,
+                             placeholder: attrs.contextEnabled ? "" : I18n.t('search.title') };
+                 },
+
+                 keyUp(e) {
+                     if (e.which === 13) {
+                         return this.sendWidgetAction('fullSearch');
+                     }
+
+                     const val = this.attrs.value;
+                     let newVal = $(`#${this.buildId()}`).val();
+
+                     let projectModel = getProjectModel();
+                     if (projectModel) {
+                         newVal += ' project:' + projectModel.parent_guids[0];
+                     }
+
+                     if (newVal !== val) {
+                         this.sendWidgetAction('searchTermChanged', newVal);
+                     }
+                 }
             });
         });
 
@@ -377,6 +494,6 @@ export default {
                 }
                 this._super(controller, params);
             }
-        })
+        });
     }
 };

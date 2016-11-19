@@ -91,4 +91,3 @@ The show-project.hbs file inserted into the topic-title plugin outlet displays t
 Finally, there is a osf-projects.scss file with a minimum number of styles to support the project/forum page.
 
 ##Further Work/Bugs to Fix
-Allow filtering search results by project.

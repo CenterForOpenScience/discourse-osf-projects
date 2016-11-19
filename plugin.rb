@@ -804,4 +804,11 @@ after_initialize do
             MessageBus.publish('/latest', message.as_json, group_ids: group_ids)
         end
     end
+
+    Search.class_eval do
+        advanced_filter(/project:([a-zA-Z0-9]*)/) do |posts,match|
+            posts.joins('LEFT JOIN topic_custom_fields AS tc2 ON (posts.topic_id = tc2.topic_id)')
+                  .where('tc2.name = ? AND tc2.value LIKE ?', PARENT_GUIDS_FIELD_NAME, "%-#{match}-%")
+        end
+    end
 end
