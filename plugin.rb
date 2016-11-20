@@ -624,7 +624,9 @@ after_initialize do
                     options = {unordered: true}
                 end
 
-                list = query.create_list(filter, options, result)
+                # the fully qualified filter name is used to pass mark the data in the preload store
+                # so that it will be correctly used by the front end
+                list = query.create_list("forum/#{project_guid}/#{filter}", options, result)
                 list.parent_guids = parent_guids
                 list.parent_names = parent_names
                 list.project_is_public = project_is_public
