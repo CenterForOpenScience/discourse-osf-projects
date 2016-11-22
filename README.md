@@ -111,4 +111,3 @@ In the 'topic-title' plugin outlet, we display the entire chain of containing an
 Finally, there is a osf-projects.scss file with a minimum number of styles to support the project/forum page.
 
 ##Further Work/Bugs to Fix
-Make sure search works on view_only projects

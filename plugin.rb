@@ -137,6 +137,17 @@ after_initialize do
                   .where("tc.name = ? AND tc.value IN (#{allowed_project_guids.to_sql})", PROJECT_GUID_FIELD_NAME)
         end
 
+        def self.allowed_project_posts(posts, user)
+            return posts if user && user.staff?
+            # a visible group is a public one
+            allowed_project_guids = Group.select(:name)
+                                         .joins('INNER JOIN group_users AS gu ON groups.id = gu.group_id')
+                                         .where((user ? 'gu.user_id = :user_id OR ' : '') + "groups.visible = 't'",
+                                                 user_id: user ? user.id : nil)
+            posts.joins('LEFT JOIN topic_custom_fields AS tc ON posts.topic_id = tc.topic_id')
+                  .where("tc.name = ? AND tc.value IN (#{allowed_project_guids.to_sql})", PROJECT_GUID_FIELD_NAME)
+        end
+
         def self.filter_to_project(project_guid, topics)
             topics.joins('LEFT JOIN topic_custom_fields AS tc2 ON (topics.id = tc2.topic_id)')
                   .where('tc2.name = ? AND tc2.value LIKE ?', PARENT_GUIDS_FIELD_NAME, "%-#{project_guid}-%")
@@ -775,8 +786,31 @@ after_initialize do
 
     Search.class_eval do
         advanced_filter(/project:([a-zA-Z0-9]*)/) do |posts,match|
+            @project_guid = match
             posts.joins('LEFT JOIN topic_custom_fields AS tc2 ON (posts.topic_id = tc2.topic_id)')
                   .where('tc2.name = ? AND tc2.value LIKE ?', PARENT_GUIDS_FIELD_NAME, "%-#{match}-%")
+        end
+
+        advanced_filter(/view_only:([a-zA-Z0-9]*)/) do |posts,match|
+            @view_only = match
+            posts
+        end
+
+        old_posts_query = self.instance_method(:posts_query)
+        define_method(:posts_query) do |limit, opts=nil|
+            posts = old_posts_query.bind(self).call(limit, opts)
+            if @project_guid
+                project_topic = OsfProjects::topic_for_guid(@project_guid)
+                return Post.none unless project_topic && project_topic.deleted_at.nil?
+
+                project_is_public = project_topic.project_is_public
+
+                return Post.none if @view_only && !OsfProjects::can_view(project_topic, @view_only)
+                return Post.none unless @view_only || project_is_public ||
+                        OsfProjects::can_create_topic_in_project(project_topic.parent_groups[0], @guardian.user)
+                return posts
+            end
+            OsfProjects::allowed_project_posts(posts, @guardian.user)
         end
     end
 end

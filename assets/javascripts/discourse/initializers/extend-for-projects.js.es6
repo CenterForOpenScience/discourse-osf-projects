@@ -20,6 +20,8 @@ import { NotificationLevels } from 'discourse/lib/notification-levels';
 import { h } from 'virtual-dom';
 import RawHtml from 'discourse/widgets/raw-html';
 import { dateNode } from 'discourse/helpers/node';
+import FullPageSearchController from 'discourse/controllers/full-page-search';
+import SiteHeader from 'discourse/components/site-header';
 
 // startsWith polyfill from https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/startsWith
 if (!String.prototype.startsWith) {
@@ -72,7 +74,47 @@ export default {
         // Setting this value is what makes new topics (from the composer) able to appear in the target project
         Composer.serializeOnCreate('parent_guids');
 
+        // Allow the full-page-search-category connector to add the view_only link itself
+        // Since it is an ember link-to, just modifying the link afterward would not be enough
+        FullPageSearchController.reopen({
+            view_only: function() {
+                var viewOnlyMatch = this.get('q').match(/view_only:([a-zA-Z0-9]+)/);
+                return viewOnlyMatch ? viewOnlyMatch[1] : null;
+            }.property('q')
+        });
+
+        function fixSearchUrls() {
+            var container = Discourse.__container__;
+            var route = container.lookup('controller:Application').currentPath;
+
+            if (!route.startsWith('full-page-search')) {
+                return;
+            }
+            // All we can really reliably get is the view_only key and project_guid
+            // But the guid by itself would not be very useful...
+            var searchController = container.lookup('controller:full-page-search');
+            var view_only = searchController.get('view_only');
+            var queryString = view_only ? '?view_only=' + view_only : '';
+
+            var topics = document.querySelectorAll('.topic');
+            _.each(topics, t => {
+                var projectLink = t.querySelector('.osf-search-parent-project a');
+                var projectGuid = projectLink.href.match(/forum\/([a-zA-Z0-9]+)/)[1];
+
+                var categoryLink = t.querySelector('.search-category a');
+                if (!categoryLink.pathname.startsWith('/forum/')) {
+                    categoryLink.pathname = '/forum/' + projectGuid + categoryLink.pathname;
+                    categoryLink.search = queryString;
+                }
+
+                var topicLink = t.querySelector('a.search-link');
+                topicLink.search = queryString;
+            });
+        }
+
         function fixUrls() {
+            fixSearchUrls();
+
             var projectModel = getProjectModel();
             if (!projectModel) {
                 return;
@@ -129,6 +171,14 @@ export default {
                         link.search = queryString;
                     });
                 }
+            }
+
+            // add view_only to topic search results
+            if (viewOnly) {
+                var searchLinks = document.querySelectorAll('ul:first-child a.search-link');
+                _.each(searchLinks, link => {
+                    link.search = queryString;
+                });
             }
 
             // Remove sharing links on the dates from view_only views
@@ -238,6 +288,7 @@ export default {
                     let projectModel = getProjectModel();
                     if (projectModel) {
                         val = val.replace(' project:' + projectModel.parent_guids[0], '');
+                        val = val.replace(' view_only:' + projectModel.view_only, '');
                     }
 
                     return { type: 'text',
@@ -256,6 +307,7 @@ export default {
                      let projectModel = getProjectModel();
                      if (projectModel) {
                          newVal += ' project:' + projectModel.parent_guids[0];
+                         newVal += projectModel.view_only ? ' view_only:' + projectModel.view_only : '';
                      }
 
                      if (newVal !== val) {
@@ -263,6 +315,14 @@ export default {
                      }
                  }
             });
+        });
+
+        // To fix search result urls
+        SiteHeader.reopen({
+            afterRender() {
+                this._super();
+                Ember.run.scheduleOnce('afterRender', fixUrls);
+            }
         });
 
         TopicView.reopen({
