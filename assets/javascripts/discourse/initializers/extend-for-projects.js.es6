@@ -10,7 +10,7 @@ import TopicTrackingState from 'discourse/models/topic-tracking-state';
 import { on } from 'ember-addons/ember-computed-decorators';
 import ComposerEditor from 'discourse/components/composer-editor';
 import DiscoveryTopics from 'discourse/controllers/discovery/topics';
-import TopicView from 'discourse/views/topic';
+import TopicComponent from 'discourse/components/discourse-topic';
 import TopicModel from 'discourse/models/topic';
 import TopicController from 'discourse/controllers/topic';
 import TopicRouter from 'discourse/routes/topic';
@@ -325,10 +325,11 @@ export default {
             }
         });
 
-        TopicView.reopen({
-            domChange: function() {
+        TopicComponent.reopen({
+            didInsertElement() {
+                this._super();
                 Ember.run.scheduleOnce('afterRender', fixUrls);
-            }.on('didInsertElement')
+            }
         });
 
         TopicModel.reopen({
