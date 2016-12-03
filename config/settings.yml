@@ -1,4 +1,1 @@
 plugins:
-    osf_projects_enabled:
-        default: true
-        client: true

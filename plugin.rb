@@ -1,9 +1,7 @@
 # name: discourse-osf-projects
 # about: Introduces the concept of projects or sub-sites that can be either public or private
-# version: 0.0.1
+# version: 0.1
 # authors: Acshi Haggenmiller
-enabled_site_setting :osf_projects_enabled
-
 register_asset 'stylesheets/osf-projects.scss'
 register_asset 'javascripts/discourse/templates/projects/index.hbs', :server_side
 register_asset 'javascripts/discourse/templates/projects/show.hbs', :server_side
