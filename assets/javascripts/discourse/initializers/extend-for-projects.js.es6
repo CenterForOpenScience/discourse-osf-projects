@@ -22,6 +22,8 @@ import RawHtml from 'discourse/widgets/raw-html';
 import { dateNode } from 'discourse/helpers/node';
 import FullPageSearchController from 'discourse/controllers/full-page-search';
 import SiteHeader from 'discourse/components/site-header';
+import Ember from 'ember';
+const { getOwner } = Ember;
 
 // startsWith polyfill from https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/startsWith
 if (!String.prototype.startsWith) {
@@ -146,22 +148,22 @@ export default {
                     }
                     // These links were made by the link-to helper so they need to be modified
                     // in the ember View. This seems kinda convoluted...
-                    var view = Ember.View.views[link.id];
+                    var view = Discourse.__container__.lookup('-view-registry:main')[link.id];
                     var href = view.get('href');
                     if (href == '/' || href == '/latest') {
                         view.set('href', '/forum/' + projectGuid + queryString); // for appearance
-                        view.set('loadedParams.targetRouteName', 'projects.show');
-                        view.set('loadedParams.models', [projectGuid]);
+                        view.set('targetRouteName', 'projects.show');
+                        view.set('models', [projectGuid]);
                     } else if (href == '/categories') {
                         view.set('href', '/forum/' + projectGuid + '/' + navMode + queryString);
                         if (navMode.startsWith('top')) {
-                            view.set('loadedParams.targetRouteName', 'projects.' + navMode);
+                            view.set('targetRouteName', 'projects.' + navMode);
                         } else {
-                            view.set('loadedParams.targetRouteName', 'projects.show' + navMode.capitalize());
+                            view.set('targetRouteName', 'projects.show' + navMode.capitalize());
                         }
-                        view.set('loadedParams.models', [projectGuid]);
+                        view.set('models', [projectGuid]);
                     }
-                    view.set('loadedParams.queryParams', {view_only: viewOnly});
+                    view.set('queryParams', {view_only: viewOnly});
                 });
 
                 // Add the view_only id to all topics on the list
@@ -522,7 +524,7 @@ export default {
             _composerEditorInit() {
                 this._super();
 
-                const template = this.container.lookup('template:user-selector-autocomplete.raw');
+                const template = getOwner(this).lookup('template:user-selector-autocomplete.raw');
                 const $input = this.$('.d-editor-input');
                 $input.autocomplete('destroy');
                 $input.autocomplete({

@@ -71,8 +71,7 @@ after_initialize do
         end
 
         def self.topics_for_guids(guids)
-            topics = Topic.unscoped
-                            .joins('LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)')
+            topics = Topic.joins('LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)')
                             .references('tc')
                             .where('tc.name = ? AND tc.value IN (?)', TOPIC_GUID_FIELD_NAME, guids)
 
