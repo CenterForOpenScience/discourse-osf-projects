@@ -70,8 +70,8 @@ after_initialize do
             topics
         end
 
-        def self.topics_for_guids(guids)
-            topics = Topic.joins('LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)')
+        def self.topics_for_guids(topic_set, guids)
+            topics = topic_set.joins('LEFT JOIN topic_custom_fields AS tc ON (topics.id = tc.topic_id)')
                             .references('tc')
                             .where('tc.name = ? AND tc.value IN (?)', TOPIC_GUID_FIELD_NAME, guids)
 
@@ -83,8 +83,8 @@ after_initialize do
             topics.to_a.uniq { |t| t.topic_guid }
         end
 
-        def self.topic_for_guid(guid)
-            topics_for_guids([guid].flatten)[0]
+        def self.topic_for_guid(topic_set, guid)
+            topics_for_guids(topic_set, [guid].flatten)[0]
         end
 
         # guids is passed for ORDER of the array
@@ -112,7 +112,7 @@ after_initialize do
         def self.can_create_topic_in_project(project_group, user)
             return false if user == nil
             return true if user.staff?
-            project_group.group_users.any? {|gu| gu.user_id == user.id}
+            project_group.group_users.any? { |gu| gu.user_id == user.id }
         end
 
         def self.can_view(topic, view_only_id)
@@ -340,7 +340,7 @@ after_initialize do
         # Override topic creation to avoid creating multiple topics with the same topic_guid
         old_create = self.instance_method(:create)
         define_method(:create) do
-            topic = OsfProjects::topic_for_guid(@opts[:topic_guid]) if @opts[:topic_guid]
+            topic = OsfProjects::topic_for_guid(Topic.with_deleted, @opts[:topic_guid]) if @opts[:topic_guid]
             if topic
                 topic.recover! if topic.deleted_at.present?
                 return topic
@@ -558,8 +558,8 @@ after_initialize do
 
         def delete
             project_guid = OsfProjects::clean_guid(params[:project_guid])
-            project_topic = OsfProjects::topic_for_guid(project_guid)
-            raise Discourse::NotFound unless project_topic && (project_topic.deleted_at.nil? || project_topic.deleted_by_id.present?)
+            project_topic = OsfProjects::topic_for_guid(Topic, project_guid)
+            raise Discourse::NotFound unless project_topic
             raise Discourse::NotFound unless OsfProjects::can_create_topic_in_project(project_topic.parent_groups[0], current_user)
 
             # 'Trashing' every single project in the topic allows them to be later recovered,
@@ -572,7 +572,7 @@ after_initialize do
 
         def update
             project_guid = OsfProjects::clean_guid(params[:project_guid])
-            project_topic = OsfProjects::topic_for_guid(project_guid)
+            project_topic = OsfProjects::topic_for_guid(Topic.with_deleted, project_guid)
             project_group = project_topic.parent_groups[0] if project_topic
 
             raise Discourse::NotFound unless project_group == nil || OsfProjects::can_create_topic_in_project(project_group, current_user)
@@ -602,8 +602,8 @@ after_initialize do
         Discourse.filters.each do |filter|
             define_method("show_#{filter}") do
                 project_guid = OsfProjects::clean_guid(params[:project_guid])
-                project_topic = OsfProjects::topic_for_guid(project_guid)
-                raise Discourse::NotFound unless project_topic && project_topic.deleted_at.nil?
+                project_topic = OsfProjects::topic_for_guid(Topic, project_guid)
+                raise Discourse::NotFound unless project_topic
 
                 project_is_public = project_topic.project_is_public
                 # Raise an error if the view only id is invalid -- that makes this easier to debug.
@@ -614,7 +614,7 @@ after_initialize do
 
                 parent_guids = project_topic.parent_guids
                 # parent_topics will become out of order, but names_for_topics restores order
-                parent_topics = OsfProjects::topics_for_guids(parent_guids)
+                parent_topics = OsfProjects::topics_for_guids(Topic, parent_guids)
                 parent_topics = OsfProjects::filter_viewable_topics(parent_topics, current_user, params[:view_only])
                 parent_names, parent_guids = OsfProjects::names_guids_for_topics(parent_guids, parent_topics)
 
@@ -650,8 +650,8 @@ after_initialize do
         TopTopic.periods.each do |period|
             define_method("top_#{period}") do |options = nil|
                 project_guid = OsfProjects::clean_guid(params[:project_guid])
-                project_topic = OsfProjects::topic_for_guid(project_guid)
-                raise Discourse::NotFound unless project_topic && project_topic.deleted_at.nil?
+                project_topic = OsfProjects::topic_for_guid(Topic, project_guid)
+                raise Discourse::NotFound unless project_topic
 
                 project_is_public = project_topic.project_is_public
                 raise Discourse::NotFound if params[:view_only] && !OsfProjects::can_view(project_topic, params[:view_only])
@@ -660,7 +660,7 @@ after_initialize do
 
                 parent_guids = project_topic.parent_guids
                 # parent_topics will become out of order, but names_for_topics restores order
-                parent_topics = OsfProjects::topics_for_guids(parent_guids)
+                parent_topics = OsfProjects::topics_for_guids(Topic, parent_guids)
                 parent_topics = OsfProjects::filter_viewable_topics(parent_topics, current_user, params[:view_only])
                 parent_names, parent_guids = OsfProjects::names_guids_for_topics(parent_guids, parent_topics)
 
@@ -797,8 +797,8 @@ after_initialize do
         define_method(:posts_query) do |limit, opts=nil|
             posts = old_posts_query.bind(self).call(limit, opts)
             if @project_guid
-                project_topic = OsfProjects::topic_for_guid(@project_guid)
-                return Post.none unless project_topic && project_topic.deleted_at.nil?
+                project_topic = OsfProjects::topic_for_guid(Topic, @project_guid)
+                return Post.none unless project_topic
 
                 project_is_public = project_topic.project_is_public
 
