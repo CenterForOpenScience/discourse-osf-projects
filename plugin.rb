@@ -165,6 +165,25 @@ after_initialize do
         end
     end
 
+    require_dependency 'application_controller'
+    require_dependency 'avatar_lookup'
+    require_dependency 'embed_controller'
+    require_dependency 'group'
+    require_dependency 'guardian'
+    require_dependency 'list_controller'
+    require_dependency 'post_revisor'
+    require_dependency 'post_serializer'
+    require_dependency 'search'
+    require_dependency 'top_topic'
+    require_dependency 'topic'
+    require_dependency 'topic_creator'
+    require_dependency 'topic_list'
+    require_dependency 'topic_list_responder'
+    require_dependency 'topic_query'
+    require_dependency 'topic_tracking_state'
+    require_dependency 'topic_view_serializer'
+    require_dependency 'topics_controller'
+
     ActiveRecord::Relation.class_eval do
         attr_accessor :preload_funcs
 
@@ -353,8 +372,29 @@ after_initialize do
     # Register these Topic attributes to appear on the Topic page
     TopicViewSerializer.attributes_from_topic(:topic_guid)
     TopicViewSerializer.attributes_from_topic(:project_is_public)
-    TopicViewSerializer.attributes_from_topic(:parent_guids)
-    TopicViewSerializer.attributes_from_topic(:parent_names)
+    TopicViewSerializer.class_eval do
+        attributes :parent_guids
+        attributes :parent_names
+
+        def cache_parent_guids_names
+            # we can't just pull these values from the topic. because we need to filter
+            # out ones the user does not have permission to know about
+            parent_topics = OsfProjects::topics_for_guids(Topic, object.topic.parent_guids)
+            parent_topics = OsfProjects::filter_viewable_topics(parent_topics, scope.user, scope.view_only_id)
+            # parent_topics will be out of order, but names_for_topics restores the order
+            @parent_names, @parent_guids = OsfProjects::names_guids_for_topics(object.topic.parent_guids, parent_topics)
+        end
+
+        def parent_guids
+            cache_parent_guids_names unless @parent_guids
+            @parent_guids
+        end
+
+        def parent_names
+            cache_parent_guids_names unless @parent_names
+            @parent_names
+        end
+    end
 
     # Register these to appear on the TopicList page/the SuggestedTopics for _each item_ on the topic
     # For some reason it doesn't work to add these to the parent serializer listable_topic
@@ -379,10 +419,6 @@ after_initialize do
         TopicList.preloaded_custom_fields << TOPIC_GUID_FIELD_NAME
         TopicList.preloaded_custom_fields << PROJECT_GUID_FIELD_NAME
     end
-
-    require_dependency 'application_controller'
-    require_dependency 'topic_list_responder'
-    require_dependency 'topic_query'
 
     # Add custom topic list attributes and add register them to be output by the serializer
     # This data is output once for the entire topic list
@@ -415,7 +451,7 @@ after_initialize do
 
         def unread_project_results(project_guid)
             result = default_project_results(project_guid)
-            result = TopicQuery.unread_filter(result)
+            result = TopicQuery.unread_filter(result, staff: @user.try(:staff?))
             suggested_ordering(result, {})
         end
 

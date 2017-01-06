@@ -1,7 +1,0 @@
-{{#if result.topic.project_guid}}
-    <div class='osf-search-parent-project'>
-        {{#link-to 'projects.show' result.topic.project_guid (query-params view_only=view_only) }}
-            {{result.topic.project_name}}
-        {{/link-to}}
-    </div>
-{{/if}}
