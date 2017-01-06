@@ -796,7 +796,7 @@ after_initialize do
             publish_read(topic.id, 1, topic.user_id)
         end
 
-        def self.publish_latest(topic)
+        def self.publish_latest(topic, staff_only=false)
             return unless topic.archetype == 'regular'
 
             message = {
@@ -812,7 +812,12 @@ after_initialize do
                 }
             }
 
-            group_ids = topic.category && topic.category.secure_group_ids
+            group_ids =
+              if staff_only
+                [Group::AUTO_GROUPS[:staff]]
+              else
+                topic.category && topic.category.secure_group_ids
+              end
             MessageBus.publish('/latest', message.as_json, group_ids: group_ids)
         end
     end
