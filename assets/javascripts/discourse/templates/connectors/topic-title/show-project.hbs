@@ -7,8 +7,8 @@
             <i class="fa fa-angle-right"></i>
         {{/if}}
         <span class='parent-project'>
-            {{#if this.view_only}}
-                {{#link-to 'projects.show' (object-from-end this.model.parent_guids index) (query-params view_only=this.view_only) }}
+            {{#if this.model.view_only}}
+                {{#link-to 'projects.show' (object-from-end this.model.parent_guids index) (query-params view_only=this.model.view_only) }}
                     {{object-from-end this.model.parent_names index}}
                 {{/link-to}}
             {{else}}
