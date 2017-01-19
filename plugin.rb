@@ -477,7 +477,7 @@ after_initialize do
 
         def list_project_top_for(project_guid, period)
             score = "#{period}_score"
-            create_list(:top, unordered: true, topics: default_project_results(project_guid)) do |topics|
+            create_list(:top, {unordered: true}, default_project_results(project_guid)) do |topics|
                 topics = topics.joins(:top_topic).where("top_topics.#{score} > 0")
                 if period == :yearly && @user.try(:trust_level) == TrustLevel[0]
                     topics.order(TopicQuerySQL.order_top_with_pinned_category_for(score))
