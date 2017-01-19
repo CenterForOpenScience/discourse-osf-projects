@@ -274,6 +274,7 @@ after_initialize do
 
             unordererd_groups = Group.where(name: parent_guids).preload(:group_custom_fields).to_a
             @parent_groups = parent_guids.map {|guid| unordererd_groups.select {|group| group.name == guid }.first}
+            @parent_groups = @parent_groups.compact # in case the groups do not exist
         end
 
         def parent_names
